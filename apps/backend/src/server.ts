@@ -2,6 +2,7 @@ import 'dotenv/config';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { authRoutes } from './routes/auth.js';
+import { peopleRoutes } from './routes/people.js';
 
 const app = Fastify({
   logger: true
@@ -17,6 +18,10 @@ app.get('/health', async () => {
 
 await app.register(authRoutes, {
   prefix: '/auth'
+});
+
+await app.register(peopleRoutes, {
+  prefix: '/people'
 });
 
 const port = Number(process.env.PORT ?? 3333);

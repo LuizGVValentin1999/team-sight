@@ -2,6 +2,7 @@
 
 import '@ant-design/v5-patch-for-react-19';
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Button, Card, Flex, Form, Input, Typography, message } from 'antd';
 
 type LoginFormValues = {
@@ -12,6 +13,7 @@ type LoginFormValues = {
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3333';
 
 export function LoginForm() {
+  const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
@@ -19,6 +21,18 @@ export function LoginForm() {
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (!mounted) {
+      return;
+    }
+
+    const existingToken = localStorage.getItem('teamsight_token');
+
+    if (existingToken) {
+      router.replace('/people');
+    }
+  }, [mounted, router]);
 
   const handleSubmit = async (values: LoginFormValues) => {
     setLoading(true);
@@ -44,6 +58,7 @@ export function LoginForm() {
 
       messageApi.success(`Bem-vindo, ${data.user?.name ?? 'usuário'}!`);
       localStorage.setItem('teamsight_token', data.token);
+      router.replace('/people');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Erro inesperado';
       messageApi.error(errorMessage);
@@ -55,6 +70,10 @@ export function LoginForm() {
   if (!mounted) {
     return (
       <div className="app-splash">
+        <div className="app-splash__card">
+          <h1>TeamSight</h1>
+          <p>Carregando interface...</p>
+        </div>
       </div>
     );
   }

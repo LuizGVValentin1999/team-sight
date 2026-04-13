@@ -389,6 +389,20 @@ Backend: `http://localhost:3333`
 * e-mail: `admin@teamsight.local`
 * senha: `123456`
 
+### Módulo inicial de pessoas
+
+URLs atuais:
+
+* login: `http://localhost:3000/login`
+* pessoas: `http://localhost:3000/people`
+
+Nesta tela já é possível:
+
+* cadastrar pessoas do time
+* selecionar cargo (`DEV`, `QA`, `PO`, `UX`, `MANAGER`)
+* selecionar nível (`INTERN`, `JUNIOR`, `MID`, `SENIOR`, `STAFF`)
+* listar pessoas cadastradas
+
 ### Variáveis de ambiente
 
 Frontend (`apps/frontend/.env.local`):

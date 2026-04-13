@@ -1,8 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { compare } from 'bcryptjs';
-import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
+import { signAccessToken } from '../lib/jwt.js';
 
 const loginBodySchema = z.object({
   email: z.string().email(),
@@ -33,14 +33,10 @@ export async function authRoutes(app: FastifyInstance) {
       return reply.status(401).send({ message: 'Credenciais inválidas' });
     }
 
-    const token = jwt.sign(
-      {
-        sub: user.id,
-        role: user.role
-      },
-      process.env.JWT_SECRET ?? 'teamsight-dev-secret',
-      { expiresIn: '8h' }
-    );
+    const token = signAccessToken({
+      sub: user.id,
+      role: user.role
+    });
 
     return reply.send({
       token,
