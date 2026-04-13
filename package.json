@@ -1,0 +1,21 @@
+{
+  "name": "teamsight",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n FRONT,BACK -c blue,green \"npm run dev -w @teamsight/frontend\" \"npm run dev -w @teamsight/backend\"",
+    "dev:frontend": "npm run dev -w @teamsight/frontend",
+    "dev:backend": "npm run dev -w @teamsight/backend",
+    "build": "npm run build -w @teamsight/database && npm run build -w @teamsight/backend && npm run build -w @teamsight/frontend",
+    "db:generate": "npm run prisma:generate -w @teamsight/database",
+    "db:migrate": "npm run prisma:migrate -w @teamsight/database",
+    "db:seed": "npm run prisma:seed -w @teamsight/database"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

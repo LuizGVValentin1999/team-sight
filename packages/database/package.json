@@ -1,0 +1,26 @@
+{
+  "name": "@teamsight/database",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && DATABASE_URL='file:./dev.db' prisma generate",
+    "prisma:generate": "DATABASE_URL='file:./dev.db' prisma generate",
+    "prisma:migrate": "if [ ! -f prisma/dev.db ]; then DATABASE_URL='file:./dev.db' prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > prisma/init.sql && DATABASE_URL='file:./dev.db' prisma db execute --file prisma/init.sql --schema prisma/schema.prisma; else echo 'SQLite already exists at prisma/dev.db (skip init)'; fi",
+    "prisma:seed": "DATABASE_URL='file:./dev.db' tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.7.0",
+    "bcryptjs": "^3.0.2"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^22.15.18",
+    "prisma": "^6.7.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}

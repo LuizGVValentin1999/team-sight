@@ -1,0 +1,63 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  DEV
+  QA
+  PO
+  UX
+  MANAGER
+}
+
+enum Seniority {
+  INTERN
+  JUNIOR
+  MID
+  SENIOR
+  STAFF
+}
+
+model Team {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  users     User[]
+}
+
+model User {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  passwordHash String
+  role         UserRole
+  seniority    Seniority
+  jiraUserKey  String?
+  gitUsername  String?
+  hiredAt      DateTime
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  teamId       String?
+  team         Team?     @relation(fields: [teamId], references: [id])
+  notes        Note[]    @relation("UserNotes")
+  authored     Note[]    @relation("AuthorNotes")
+}
+
+model Note {
+  id        String   @id @default(cuid())
+  type      String
+  title     String
+  content   String
+  createdAt DateTime @default(now())
+  userId    String
+  authorId  String
+  user      User     @relation("UserNotes", fields: [userId], references: [id])
+  author    User     @relation("AuthorNotes", fields: [authorId], references: [id])
+}
