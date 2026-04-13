@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { AntdRegistry } from '@ant-design/nextjs-registry';
+import { Providers } from './providers';
 import 'antd/dist/reset.css';
 import './globals.css';
 
@@ -14,9 +15,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="pt-BR">
+    <html lang="pt-BR" suppressHydrationWarning>
       <body>
-        <AntdRegistry>{children}</AntdRegistry>
+        <AntdRegistry>
+          <Providers>{children}</Providers>
+        </AntdRegistry>
       </body>
     </html>
   );
