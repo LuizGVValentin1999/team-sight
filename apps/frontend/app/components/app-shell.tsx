@@ -18,13 +18,12 @@ const menuItems: MenuProps['items'] = [
   {
     key: '/people',
     icon: <TeamOutlined />,
-    label: 'People'
+    label: 'Pessoas'
   },
   {
-    key: '/reports',
+    key: '/reports/jira',
     icon: <BarChartOutlined />,
-    label: 'Reports',
-    disabled: true
+    label: 'Relatório Jira'
   }
 ];
 
@@ -56,7 +55,7 @@ export function AppShell({ title, subtitle, selectedPath, children }: AppShellPr
             <Typography.Title level={3} style={{ margin: 0 }}>
               TeamSight
             </Typography.Title>
-            <Typography.Text type="secondary">Navigation</Typography.Text>
+            <Typography.Text type="secondary">Navegação</Typography.Text>
           </div>
 
           <Menu
@@ -79,7 +78,7 @@ export function AppShell({ title, subtitle, selectedPath, children }: AppShellPr
               <Typography.Text type="secondary">{subtitle}</Typography.Text>
             </div>
 
-            <Button onClick={handleLogout}>Logout</Button>
+            <Button onClick={handleLogout}>Sair</Button>
           </Flex>
         </Header>
 

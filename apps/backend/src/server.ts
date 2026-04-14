@@ -3,6 +3,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { authRoutes } from './routes/auth.js';
 import { peopleRoutes } from './routes/people.js';
+import { jiraReportsRoutes } from './routes/jira-reports.js';
 
 const app = Fastify({
   logger: true
@@ -22,6 +23,10 @@ await app.register(authRoutes, {
 
 await app.register(peopleRoutes, {
   prefix: '/people'
+});
+
+await app.register(jiraReportsRoutes, {
+  prefix: '/reports/jira'
 });
 
 const port = Number(process.env.PORT ?? 3333);

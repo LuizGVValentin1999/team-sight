@@ -4,6 +4,7 @@ import '@ant-design/v5-patch-for-react-19';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Card, Flex, Form, Input, Typography, message } from 'antd';
+import { AppLoading } from './components/app-loading';
 
 type LoginFormValues = {
   email: string;
@@ -68,14 +69,7 @@ export function LoginForm() {
   };
 
   if (!mounted) {
-    return (
-      <div className="app-splash">
-        <div className="app-splash__card">
-          <h1>TeamSight</h1>
-          <p>Carregando interface...</p>
-        </div>
-      </div>
-    );
+    return <AppLoading />;
   }
 
   return (

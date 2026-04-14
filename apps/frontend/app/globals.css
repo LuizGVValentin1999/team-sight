@@ -13,31 +13,7 @@ body {
   box-sizing: border-box;
 }
 
-.app-splash {
+.app-loading {
   min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   padding: 24px;
-}
-
-.app-splash__card {
-  width: 100%;
-  max-width: 420px;
-  border-radius: 16px;
-  background: #ffffff;
-  border: 1px solid #d9d9d9;
-  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.08);
-  padding: 28px;
-}
-
-.app-splash__card h1 {
-  margin: 0 0 8px;
-  font-size: 32px;
-  line-height: 1.1;
-}
-
-.app-splash__card p {
-  margin: 0;
-  color: #667085;
 }

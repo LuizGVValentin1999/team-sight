@@ -395,6 +395,7 @@ URLs atuais:
 
 * login: `http://localhost:3000/login`
 * pessoas: `http://localhost:3000/people`
+* relatório Jira: `http://localhost:3000/reports/jira`
 
 Nesta tela já é possível:
 
@@ -402,6 +403,14 @@ Nesta tela já é possível:
 * selecionar cargo (`DEV`, `QA`, `PO`, `UX`, `MANAGER`)
 * selecionar nível (`INTERN`, `JUNIOR`, `MID`, `SENIOR`, `STAFF`)
 * listar pessoas cadastradas
+
+### Relatório Jira (Kanban)
+
+Na tela de relatório Jira é possível:
+
+* buscar atividades por `projectKey` ou JQL customizada
+* ver quantas horas as issues ficaram em cada status
+* ver totais por etapa e detalhamento por issue
 
 ### Variáveis de ambiente
 
@@ -418,4 +427,7 @@ PORT=3333
 JWT_SECRET=teamsight-dev-secret
 FRONTEND_ORIGIN=http://localhost:3000
 DATABASE_URL="file:../../packages/database/prisma/dev.db"
+JIRA_BASE_URL=https://your-domain.atlassian.net
+JIRA_EMAIL=you@company.com
+JIRA_API_TOKEN=your-jira-api-token
 ```

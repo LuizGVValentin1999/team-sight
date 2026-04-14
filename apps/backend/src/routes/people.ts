@@ -1,8 +1,8 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { hash } from 'bcryptjs';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
-import { verifyAccessToken } from '../lib/jwt.js';
+import { requireAuth } from '../lib/auth.js';
 
 const userRoleValues = ['DEV', 'QA', 'PO', 'UX', 'MANAGER'] as const;
 const seniorityValues = ['INTERN', 'JUNIOR', 'MID', 'SENIOR', 'STAFF'] as const;
@@ -16,28 +16,9 @@ const createPersonSchema = z.object({
   active: z.boolean().optional()
 });
 
-function ensureAuthenticated(request: FastifyRequest, reply: FastifyReply) {
-  const authorizationHeader = request.headers.authorization;
-
-  if (!authorizationHeader?.startsWith('Bearer ')) {
-    reply.status(401).send({ message: 'Não autenticado' });
-    return null;
-  }
-
-  const token = authorizationHeader.slice(7);
-  const payload = verifyAccessToken(token);
-
-  if (!payload) {
-    reply.status(401).send({ message: 'Token inválido ou expirado' });
-    return null;
-  }
-
-  return payload;
-}
-
 export async function peopleRoutes(app: FastifyInstance) {
   app.get('/metadata', async (request, reply) => {
-    const payload = ensureAuthenticated(request, reply);
+    const payload = requireAuth(request, reply);
 
     if (!payload) {
       return;
@@ -50,7 +31,7 @@ export async function peopleRoutes(app: FastifyInstance) {
   });
 
   app.get('/', async (request, reply) => {
-    const payload = ensureAuthenticated(request, reply);
+    const payload = requireAuth(request, reply);
 
     if (!payload) {
       return;
@@ -74,7 +55,7 @@ export async function peopleRoutes(app: FastifyInstance) {
   });
 
   app.post('/', async (request, reply) => {
-    const payload = ensureAuthenticated(request, reply);
+    const payload = requireAuth(request, reply);
 
     if (!payload) {
       return;

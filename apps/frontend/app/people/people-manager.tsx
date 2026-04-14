@@ -15,6 +15,7 @@ import {
   Tag,
   message
 } from 'antd';
+import { AppLoading } from '../components/app-loading';
 import { AppShell } from '../components/app-shell';
 
 type Person = {
@@ -42,15 +43,15 @@ const roleOptions: Array<{ label: string; value: Person['role'] }> = [
   { label: 'QA', value: 'QA' },
   { label: 'PO', value: 'PO' },
   { label: 'UX', value: 'UX' },
-  { label: 'Manager', value: 'MANAGER' }
+  { label: 'Gestor', value: 'MANAGER' }
 ];
 
 const seniorityOptions: Array<{ label: string; value: Person['seniority'] }> = [
-  { label: 'Intern', value: 'INTERN' },
-  { label: 'Junior', value: 'JUNIOR' },
-  { label: 'Mid', value: 'MID' },
-  { label: 'Senior', value: 'SENIOR' },
-  { label: 'Staff', value: 'STAFF' }
+  { label: 'Estagiário', value: 'INTERN' },
+  { label: 'Júnior', value: 'JUNIOR' },
+  { label: 'Pleno', value: 'MID' },
+  { label: 'Sênior', value: 'SENIOR' },
+  { label: 'Especialista', value: 'STAFF' }
 ];
 
 const roleLabelMap: Record<Person['role'], string> = {
@@ -58,15 +59,15 @@ const roleLabelMap: Record<Person['role'], string> = {
   QA: 'QA',
   PO: 'PO',
   UX: 'UX',
-  MANAGER: 'Manager'
+  MANAGER: 'Gestor'
 };
 
 const seniorityLabelMap: Record<Person['seniority'], string> = {
-  INTERN: 'Intern',
-  JUNIOR: 'Junior',
-  MID: 'Mid',
-  SENIOR: 'Senior',
-  STAFF: 'Staff'
+  INTERN: 'Estagiário',
+  JUNIOR: 'Júnior',
+  MID: 'Pleno',
+  SENIOR: 'Sênior',
+  STAFF: 'Especialista'
 };
 
 export function PeopleManager() {
@@ -178,25 +179,18 @@ export function PeopleManager() {
   };
 
   if (!mounted || !token) {
-    return (
-      <div className="app-splash">
-        <div className="app-splash__card">
-          <h1>TeamSight</h1>
-          <p>Carregando módulo de pessoas...</p>
-        </div>
-      </div>
-    );
+    return <AppLoading />;
   }
 
   return (
     <AppShell
       selectedPath="/people"
-      title="People"
-      subtitle="Manage team members with role and level"
+      title="Pessoas"
+      subtitle="Gerencie membros do time com cargo e nível"
     >
       {contextHolder}
       <Flex gap={16} wrap="wrap" align="stretch">
-        <Card title="New person" style={{ flex: '1 1 360px', minWidth: 320 }}>
+        <Card title="Nova pessoa" style={{ flex: '1 1 360px', minWidth: 320 }}>
           <Form<PersonFormValues>
             form={form}
             layout="vertical"
@@ -204,53 +198,53 @@ export function PeopleManager() {
             initialValues={{ role: 'DEV', seniority: 'MID' }}
           >
             <Form.Item
-              label="Name"
+              label="Nome"
               name="name"
-              rules={[{ required: true, message: 'Enter a name' }]}
+              rules={[{ required: true, message: 'Informe um nome' }]}
             >
-              <Input placeholder="Full name" size="large" />
+              <Input placeholder="Nome completo" size="large" />
             </Form.Item>
 
             <Form.Item
-              label="Email"
+              label="E-mail"
               name="email"
               rules={[
-                { required: true, message: 'Enter an email' },
-                { type: 'email', message: 'Invalid email' }
+                { required: true, message: 'Informe um e-mail' },
+                { type: 'email', message: 'E-mail inválido' }
               ]}
             >
-              <Input placeholder="person@company.com" size="large" />
+              <Input placeholder="pessoa@empresa.com" size="large" />
             </Form.Item>
 
             <Form.Item
-              label="Role"
+              label="Cargo"
               name="role"
-              rules={[{ required: true, message: 'Select a role' }]}
+              rules={[{ required: true, message: 'Selecione um cargo' }]}
             >
               <Select options={roleOptions} size="large" />
             </Form.Item>
 
             <Form.Item
-              label="Level"
+              label="Nível"
               name="seniority"
-              rules={[{ required: true, message: 'Select a level' }]}
+              rules={[{ required: true, message: 'Selecione um nível' }]}
             >
               <Select options={seniorityOptions} size="large" />
             </Form.Item>
 
             <Space>
               <Button type="primary" htmlType="submit" loading={createLoading}>
-                Create person
+                Cadastrar pessoa
               </Button>
               <Button htmlType="button" onClick={() => form.resetFields()}>
-                Clear
+                Limpar
               </Button>
             </Space>
           </Form>
         </Card>
 
         <Card
-          title={`Registered people (${people.length})`}
+          title={`Pessoas cadastradas (${people.length})`}
           style={{ flex: '2 1 560px', minWidth: 420 }}
         >
           <Table<Person>
@@ -260,20 +254,20 @@ export function PeopleManager() {
             pagination={{ pageSize: 8 }}
             columns={[
               {
-                title: 'Name',
+                title: 'Nome',
                 dataIndex: 'name'
               },
               {
-                title: 'Email',
+                title: 'E-mail',
                 dataIndex: 'email'
               },
               {
-                title: 'Role',
+                title: 'Cargo',
                 dataIndex: 'role',
                 render: (role: Person['role']) => <Tag>{roleLabelMap[role]}</Tag>
               },
               {
-                title: 'Level',
+                title: 'Nível',
                 dataIndex: 'seniority',
                 render: (seniority: Person['seniority']) => (
                   <Tag color="blue">{seniorityLabelMap[seniority]}</Tag>
@@ -283,7 +277,7 @@ export function PeopleManager() {
                 title: 'Status',
                 dataIndex: 'active',
                 render: (active: boolean) => (
-                  <Tag color={active ? 'green' : 'red'}>{active ? 'Active' : 'Inactive'}</Tag>
+                  <Tag color={active ? 'green' : 'red'}>{active ? 'Ativo' : 'Inativo'}</Tag>
                 )
               }
             ]}
