@@ -10,8 +10,11 @@ datasource db {
 enum UserRole {
   DEV
   QA
+  BA
   PO
   UX
+  TECH_LEAD
+  QA_LEAD
   MANAGER
 }
 
@@ -38,6 +41,7 @@ model User {
   passwordHash String
   role         UserRole
   seniority    Seniority
+  avatarUrl    String?
   jiraUserKey  String?
   gitUsername  String?
   hiredAt      DateTime

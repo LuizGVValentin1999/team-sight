@@ -11,6 +11,7 @@ type AppShellProps = {
   title: string;
   subtitle: string;
   selectedPath: string;
+  currentUserName?: string;
   children: React.ReactNode;
 };
 
@@ -27,7 +28,7 @@ const menuItems: MenuProps['items'] = [
   }
 ];
 
-export function AppShell({ title, subtitle, selectedPath, children }: AppShellProps) {
+export function AppShell({ title, subtitle, selectedPath, currentUserName, children }: AppShellProps) {
   const router = useRouter();
 
   const handleMenuClick: MenuProps['onClick'] = ({ key }) => {
@@ -38,6 +39,7 @@ export function AppShell({ title, subtitle, selectedPath, children }: AppShellPr
 
   const handleLogout = () => {
     localStorage.removeItem('teamsight_token');
+    localStorage.removeItem('teamsight_user_name');
     router.replace('/login');
   };
 
@@ -78,7 +80,10 @@ export function AppShell({ title, subtitle, selectedPath, children }: AppShellPr
               <Typography.Text type="secondary">{subtitle}</Typography.Text>
             </div>
 
-            <Button onClick={handleLogout}>Sair</Button>
+            <Flex align="center" gap={12}>
+              {currentUserName ? <Typography.Text type="secondary">{currentUserName}</Typography.Text> : null}
+              <Button onClick={handleLogout}>Sair</Button>
+            </Flex>
           </Flex>
         </Header>
 

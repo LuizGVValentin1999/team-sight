@@ -14,6 +14,7 @@ CREATE TABLE "User" (
     "passwordHash" TEXT NOT NULL,
     "role" TEXT NOT NULL,
     "seniority" TEXT NOT NULL,
+    "avatarUrl" TEXT,
     "jiraUserKey" TEXT,
     "gitUsername" TEXT,
     "hiredAt" DATETIME NOT NULL,

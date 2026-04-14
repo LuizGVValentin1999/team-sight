@@ -7,10 +7,10 @@
     ".": "./dist/index.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && DATABASE_URL='file:./dev.db' prisma generate",
-    "prisma:generate": "DATABASE_URL='file:./dev.db' prisma generate",
-    "prisma:migrate": "if [ ! -f prisma/dev.db ]; then DATABASE_URL='file:./dev.db' prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > prisma/init.sql && DATABASE_URL='file:./dev.db' prisma db execute --file prisma/init.sql --schema prisma/schema.prisma; else echo 'SQLite already exists at prisma/dev.db (skip init)'; fi",
-    "prisma:seed": "DATABASE_URL='file:./dev.db' tsx prisma/seed.ts"
+    "build": "tsc -p tsconfig.json && DATABASE_URL='file:./prisma/dev.db' prisma generate",
+    "prisma:generate": "DATABASE_URL='file:./prisma/dev.db' prisma generate",
+    "prisma:migrate": "if [ ! -f prisma/dev.db ]; then DATABASE_URL='file:./prisma/dev.db' prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > prisma/init.sql && DATABASE_URL='file:./prisma/dev.db' prisma db execute --file prisma/init.sql --schema prisma/schema.prisma; else echo 'SQLite already exists at prisma/dev.db (skip init)'; fi",
+    "prisma:seed": "DATABASE_URL='file:./prisma/dev.db' tsx prisma/seed.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.7.0",

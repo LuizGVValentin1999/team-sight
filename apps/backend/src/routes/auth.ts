@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { compare } from 'bcryptjs';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
+import { requireAuth } from '../lib/auth.js';
 import { signAccessToken } from '../lib/jwt.js';
 
 const loginBodySchema = z.object({
@@ -40,6 +41,38 @@ export async function authRoutes(app: FastifyInstance) {
 
     return reply.send({
       token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    });
+  });
+
+  app.get('/me', async (request, reply) => {
+    const payload = requireAuth(request, reply);
+
+    if (!payload) {
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        active: true
+      }
+    });
+
+    if (!user || !user.active) {
+      return reply.status(401).send({ message: 'Token inválido ou expirado' });
+    }
+
+    return reply.send({
       user: {
         id: user.id,
         name: user.name,

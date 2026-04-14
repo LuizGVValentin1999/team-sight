@@ -16,6 +16,7 @@ const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3333';
 export function LoginForm() {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
+  const [sessionChecking, setSessionChecking] = useState(true);
   const [loading, setLoading] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
 
@@ -28,11 +29,53 @@ export function LoginForm() {
       return;
     }
 
-    const existingToken = localStorage.getItem('teamsight_token');
+    let cancelled = false;
 
-    if (existingToken) {
-      router.replace('/people');
-    }
+    const bootstrapSession = async () => {
+      const existingToken = localStorage.getItem('teamsight_token');
+
+      if (!existingToken) {
+        if (!cancelled) {
+          setSessionChecking(false);
+        }
+        return;
+      }
+
+      try {
+        const response = await fetch(`${apiUrl}/auth/me`, {
+          headers: {
+            Authorization: `Bearer ${existingToken}`
+          }
+        });
+
+        const data = (await response.json()) as {
+          user?: { name?: string };
+        };
+
+        if (!response.ok || !data.user?.name) {
+          localStorage.removeItem('teamsight_token');
+          localStorage.removeItem('teamsight_user_name');
+          return;
+        }
+
+        localStorage.setItem('teamsight_user_name', data.user.name);
+        router.replace('/people');
+        return;
+      } catch {
+        localStorage.removeItem('teamsight_token');
+        localStorage.removeItem('teamsight_user_name');
+      } finally {
+        if (!cancelled) {
+          setSessionChecking(false);
+        }
+      }
+    };
+
+    void bootstrapSession();
+
+    return () => {
+      cancelled = true;
+    };
   }, [mounted, router]);
 
   const handleSubmit = async (values: LoginFormValues) => {
@@ -59,6 +102,7 @@ export function LoginForm() {
 
       messageApi.success(`Bem-vindo, ${data.user?.name ?? 'usuário'}!`);
       localStorage.setItem('teamsight_token', data.token);
+      localStorage.setItem('teamsight_user_name', data.user?.name ?? 'Usuário');
       router.replace('/people');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Erro inesperado';
@@ -68,7 +112,7 @@ export function LoginForm() {
     }
   };
 
-  if (!mounted) {
+  if (!mounted || sessionChecking) {
     return <AppLoading />;
   }
 
@@ -111,7 +155,7 @@ export function LoginForm() {
         </Form>
 
         <Typography.Paragraph type="secondary" style={{ marginTop: 16, marginBottom: 0 }}>
-          Usuário padrão: admin@teamsight.local / 123456
+          Usuário padrão: luiz.valentin@allstrategy.com.br / 123456789
         </Typography.Paragraph>
       </Card>
     </Flex>
