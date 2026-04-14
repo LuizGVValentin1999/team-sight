@@ -1,6 +1,6 @@
 'use client';
 
-import { BarChartOutlined, TeamOutlined } from '@ant-design/icons';
+import { BarChartOutlined, TeamOutlined, LineChartOutlined } from '@ant-design/icons';
 import { Button, Flex, Layout, Menu, Typography } from 'antd';
 import type { MenuProps } from 'antd';
 import { useRouter } from 'next/navigation';
@@ -25,6 +25,11 @@ const menuItems: MenuProps['items'] = [
     key: '/reports/jira',
     icon: <BarChartOutlined />,
     label: 'Relatório Jira'
+  },
+  {
+    key: '/people/progress',
+    icon: <LineChartOutlined />,
+    label: 'Acompanhamento'
   }
 ];
 
