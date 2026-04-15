@@ -5,7 +5,6 @@ import { authRoutes } from './routes/auth.js';
 import { peopleRoutes } from './routes/people.js';
 import { peopleProgressRoutes } from './routes/people-progress.js';
 import { jiraReportsRoutes } from './routes/jira-reports.js';
-import { squadsRoutes } from './routes/squads.js';
 
 const app = Fastify({
   logger: true
@@ -31,10 +30,6 @@ await app.register(peopleRoutes, {
 
 await app.register(peopleProgressRoutes, {
   prefix: '/people'
-});
-
-await app.register(squadsRoutes, {
-  prefix: '/squads'
 });
 
 await app.register(jiraReportsRoutes, {

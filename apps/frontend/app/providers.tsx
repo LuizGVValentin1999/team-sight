@@ -1,8 +1,38 @@
 'use client';
 
 import '@ant-design/v5-patch-for-react-19';
-import { useEffect } from 'react';
-import { App as AntdApp, ConfigProvider } from 'antd';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { App as AntdApp, ConfigProvider, theme as antdTheme } from 'antd';
+import ptBR from 'antd/locale/pt_BR';
+import dayjs from 'dayjs';
+import 'dayjs/locale/pt-br';
+
+type ThemeMode = 'light' | 'dark';
+
+type ThemeModeContextValue = {
+  mode: ThemeMode;
+  setMode: (mode: ThemeMode) => void;
+  toggleMode: () => void;
+};
+
+const themeStorageKey = 'teamsight_theme_mode';
+const ThemeModeContext = createContext<ThemeModeContextValue | null>(null);
+
+dayjs.locale('pt-br');
+
+function readInitialThemeMode(): ThemeMode {
+  if (typeof window === 'undefined') {
+    return 'dark';
+  }
+
+  const stored = localStorage.getItem(themeStorageKey);
+
+  if (stored === 'light' || stored === 'dark') {
+    return stored;
+  }
+
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
 
 function hasVisibleModalOverlay() {
   if (typeof document === 'undefined') {
@@ -54,6 +84,73 @@ function releaseBodyScrollLockIfNeeded() {
 }
 
 export function Providers({ children }: { children: React.ReactNode }) {
+  const [mode, setMode] = useState<ThemeMode>(readInitialThemeMode);
+
+  const toggleMode = () => {
+    setMode((current) => (current === 'dark' ? 'light' : 'dark'));
+  };
+
+  const providerValue = useMemo<ThemeModeContextValue>(
+    () => ({
+      mode,
+      setMode,
+      toggleMode
+    }),
+    [mode]
+  );
+
+  const themeConfig = useMemo(
+    () => ({
+      algorithm: mode === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
+      token: {
+        colorPrimary: '#3b82f6',
+        colorLink: '#60a5fa',
+        colorInfo: '#3b82f6',
+        borderRadius: 12,
+        fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+        ...(mode === 'dark'
+          ? {
+              colorBgBase: '#0d1117',
+              colorBgContainer: '#151b23',
+              colorBgElevated: '#1a2230',
+              colorText: '#e5e7eb',
+              colorTextSecondary: '#9ca3af',
+              colorBorder: '#2d3748',
+              colorFillSecondary: '#1f2937'
+            }
+          : {
+              colorBgBase: '#f3f6fb',
+              colorBgContainer: '#ffffff',
+              colorBgElevated: '#ffffff',
+              colorText: '#0f172a',
+              colorTextSecondary: '#475569',
+              colorBorder: '#dbe6f3',
+              colorFillSecondary: '#f1f5f9'
+            })
+      },
+      components: {
+        Layout: {
+          bodyBg: mode === 'dark' ? '#0d1117' : '#f3f6fb',
+          siderBg: mode === 'dark' ? '#101722' : '#ffffff',
+          headerBg: 'transparent'
+        },
+        Card: {
+          borderRadiusLG: 16
+        },
+        Button: {
+          borderRadius: 10
+        }
+      }
+    }),
+    [mode]
+  );
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = mode;
+    document.documentElement.style.colorScheme = mode;
+    localStorage.setItem(themeStorageKey, mode);
+  }, [mode]);
+
   useEffect(() => {
     let rafId: number | null = null;
 
@@ -94,8 +191,20 @@ export function Providers({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <ConfigProvider>
-      <AntdApp>{children}</AntdApp>
-    </ConfigProvider>
+    <ThemeModeContext.Provider value={providerValue}>
+      <ConfigProvider theme={themeConfig} locale={ptBR}>
+        <AntdApp>{children}</AntdApp>
+      </ConfigProvider>
+    </ThemeModeContext.Provider>
   );
+}
+
+export function useThemeMode() {
+  const context = useContext(ThemeModeContext);
+
+  if (!context) {
+    throw new Error('useThemeMode deve ser usado dentro de <Providers>.');
+  }
+
+  return context;
 }

@@ -1,11 +1,22 @@
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
+  --teamsight-bg: radial-gradient(circle at 10% 20%, #e5f4ff 0%, #f5f8ff 40%, #f8f6f1 100%);
+  --teamsight-text: #0f172a;
+}
+
+html[data-theme='dark'] {
+  --teamsight-bg: radial-gradient(circle at 10% 10%, #1a2330 0%, #0f141b 45%, #090d14 100%);
+  --teamsight-text: #e5e7eb;
 }
 
 body {
   margin: 0;
   min-height: 100vh;
-  background: radial-gradient(circle at 10% 20%, #e5f4ff 0%, #f5f8ff 40%, #f8f6f1 100%);
+  background: var(--teamsight-bg);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+  background-size: cover;
+  color: var(--teamsight-text);
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
 
@@ -16,4 +27,14 @@ body {
 .app-loading {
   min-height: 100vh;
   padding: 24px;
+}
+
+html[data-theme='dark'] .ant-card {
+  background: #141b26 !important;
+  border-color: #2b3545 !important;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35) !important;
+}
+
+html[data-theme='dark'] .ant-menu-item-selected {
+  background: rgba(59, 130, 246, 0.2) !important;
 }

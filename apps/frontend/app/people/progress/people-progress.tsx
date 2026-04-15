@@ -16,7 +16,6 @@ import {
   Grid,
   Input,
   InputNumber,
-  List,
   Modal,
   Progress,
   Select,
@@ -31,6 +30,7 @@ import { ArrowLeftOutlined, UserOutlined } from '@ant-design/icons';
 import { Area, AreaChart, CartesianGrid, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { AppLoading } from '../../components/app-loading';
 import { AppShell } from '../../components/app-shell';
+import { useThemeMode } from '../../providers';
 
 const MDEditor = dynamic(() => import('@uiw/react-md-editor'), {
   ssr: false
@@ -381,10 +381,32 @@ function markdownPreview(content: string, maxLength = 160) {
   return `${plainText.slice(0, maxLength - 1)}…`;
 }
 
+function releaseDocumentScrollLock() {
+  if (typeof document === 'undefined') {
+    return;
+  }
+
+  const unlock = (element: HTMLElement) => {
+    element.classList.remove('ant-scrolling-effect');
+
+    if (element.style.overflow === 'hidden') {
+      element.style.overflow = '';
+    }
+
+    if (element.style.width) {
+      element.style.width = '';
+    }
+  };
+
+  unlock(document.body);
+  unlock(document.documentElement);
+}
+
 export function PeopleProgress() {
   const router = useRouter();
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
+  const { mode } = useThemeMode();
 
   const [goalForm] = Form.useForm<GoalFormValues>();
   const [sessionForm] = Form.useForm<SessionFormValues>();
@@ -434,6 +456,7 @@ export function PeopleProgress() {
   const [messageApi, contextHolder] = message.useMessage();
   const noteContentValue = Form.useWatch('content', noteForm) ?? '';
   const noteModalScrollTopRef = useRef<number>(0);
+  const noteModalWasOpenedRef = useRef(false);
 
   useEffect(() => {
     setMounted(true);
@@ -454,6 +477,40 @@ export function PeopleProgress() {
     setGithubOrgDraft(nextOrg);
     setGithubOrgApplied(nextOrg);
   }, [mounted]);
+
+  useEffect(() => {
+    if (noteModalOpen || !noteModalWasOpenedRef.current) {
+      return;
+    }
+
+    let attempts = 0;
+    const maxAttempts = 8;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+
+    const unlockAndRestore = () => {
+      releaseDocumentScrollLock();
+
+      window.scrollTo({
+        top: noteModalScrollTopRef.current,
+        left: 0,
+        behavior: 'auto'
+      });
+
+      attempts += 1;
+
+      if (attempts < maxAttempts) {
+        timerId = setTimeout(unlockAndRestore, 40);
+      }
+    };
+
+    unlockAndRestore();
+
+    return () => {
+      if (timerId) {
+        clearTimeout(timerId);
+      }
+    };
+  }, [noteModalOpen]);
 
   useEffect(() => {
     if (!mounted) {
@@ -702,6 +759,7 @@ export function PeopleProgress() {
 
   const openCreateNoteModal = () => {
     noteModalScrollTopRef.current = window.scrollY;
+    noteModalWasOpenedRef.current = true;
     setEditingNote(null);
     noteForm.setFieldsValue({
       title: '',
@@ -712,6 +770,7 @@ export function PeopleProgress() {
 
   const openEditNoteModal = (note: ProgressNote) => {
     noteModalScrollTopRef.current = window.scrollY;
+    noteModalWasOpenedRef.current = true;
     setEditingNote(note);
     noteForm.setFieldsValue({
       title: note.title,
@@ -1235,35 +1294,46 @@ export function PeopleProgress() {
                 {filteredPeople.length === 0 ? (
                   <Empty description="Nenhuma pessoa encontrada para o filtro informado." />
                 ) : (
-                  <List<PersonSummary>
-                    itemLayout="horizontal"
+                  <Table<PersonSummary>
+                    rowKey="id"
                     dataSource={filteredPeople}
-                    renderItem={(person) => (
-                      <List.Item
-                        style={{
-                          cursor: 'pointer',
-                          borderRadius: 10,
-                          paddingInline: 12,
-                          background: person.id === selectedPersonId ? '#f0f7ff' : undefined,
-                          border: '1px solid #f1f5f9'
-                        }}
-                        onClick={() => openPersonDetails(person.id)}
-                      >
-                        <List.Item.Meta
-                          avatar={<Avatar src={person.avatarUrl ?? undefined} icon={<UserOutlined />} />}
-                          title={
-                            <Space size={8} wrap>
-                              <Typography.Text strong>{person.name}</Typography.Text>
-                              <Tag>{roleLabelMap[person.role]}</Tag>
-                              {roleSupportsSeniority(person.role) ? (
-                                <Tag>{seniorityLabelMap[person.seniority]}</Tag>
-                              ) : null}
+                    size={isMobile ? 'small' : 'middle'}
+                    scroll={{ x: 560 }}
+                    onRow={(person) => ({
+                      onClick: () => openPersonDetails(person.id),
+                      style: {
+                        cursor: 'pointer',
+                        background:
+                          person.id === selectedPersonId ? (mode === 'dark' ? '#1f314a' : '#eaf4ff') : undefined
+                      }
+                    })}
+                    pagination={{
+                      pageSize: 8,
+                      showSizeChanger: true,
+                      pageSizeOptions: ['8', '12', '20', '50'],
+                      showTotal: (total, range) => `${range[0]}-${range[1]} de ${total} pessoas`
+                    }}
+                    columns={[
+                      {
+                        title: 'Pessoa',
+                        dataIndex: 'name',
+                        render: (_: string, person: PersonSummary) => (
+                          <Space align="start" size={10}>
+                            <Avatar src={person.avatarUrl ?? undefined} icon={<UserOutlined />} />
+                            <Space direction="vertical" size={2}>
+                              <Space size={6} wrap>
+                                <Typography.Text strong>{person.name}</Typography.Text>
+                                <Tag>{roleLabelMap[person.role]}</Tag>
+                                {roleSupportsSeniority(person.role) ? (
+                                  <Tag>{seniorityLabelMap[person.seniority]}</Tag>
+                                ) : null}
+                              </Space>
+                              <Typography.Text type="secondary">{person.email}</Typography.Text>
                             </Space>
-                          }
-                          description={person.email}
-                        />
-                      </List.Item>
-                    )}
+                          </Space>
+                        )
+                      }
+                    ]}
                   />
                 )}
               </Flex>
@@ -2271,6 +2341,12 @@ export function PeopleProgress() {
         open={noteModalOpen}
         onCancel={closeNoteModal}
         focusTriggerAfterClose={false}
+        destroyOnHidden
+        afterOpenChange={(open) => {
+          if (!open) {
+            releaseDocumentScrollLock();
+          }
+        }}
         footer={[
           editingNote ? (
             <Button
@@ -2314,18 +2390,22 @@ export function PeopleProgress() {
             name="content"
             rules={[{ required: true, message: 'Escreva a anotação em Markdown' }]}
           >
-            <div data-color-mode="light">
-              <MDEditor
-                value={noteContentValue}
-                onChange={(value) => noteForm.setFieldValue('content', value ?? '')}
-                preview="edit"
-                visibleDragbar={false}
-                textareaProps={{
-                  placeholder:
-                    'Use # para títulos, - para listas, **negrito** e organização da sua evolução.'
-                }}
-                height={isMobile ? 300 : 380}
-              />
+            <div data-color-mode={mode === 'dark' ? 'dark' : 'light'}>
+              {noteModalOpen ? (
+                <MDEditor
+                  value={noteContentValue}
+                  onChange={(value) => noteForm.setFieldValue('content', value ?? '')}
+                  preview="edit"
+                  extraCommands={[]}
+                  overflow={false}
+                  visibleDragbar={false}
+                  textareaProps={{
+                    placeholder:
+                      'Use # para títulos, - para listas, **negrito** e organização da sua evolução.'
+                  }}
+                  height={isMobile ? 300 : 380}
+                />
+              ) : null}
             </div>
           </Form.Item>
 
