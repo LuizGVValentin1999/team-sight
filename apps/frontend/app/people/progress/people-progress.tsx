@@ -23,7 +23,6 @@ import {
   Statistic,
   Table,
   Tag,
-  Timeline,
   Typography,
   message
 } from 'antd';
@@ -79,6 +78,7 @@ type JiraActivity = {
   summary: string;
   status: string;
   issueType: string;
+  storyPoints: number | null;
   createdAt: string;
   updatedAt: string;
   isDone: boolean;
@@ -117,6 +117,8 @@ type JiraIssueDetailsPayload = {
   };
   summary: {
     totalBusinessHours: number;
+    totalTestBusinessHours: number;
+    totalDoubleCheckBusinessHours: number;
   };
   statusTimes: Array<{
     status: string;
@@ -129,6 +131,31 @@ type JiraIssueDetailsPayload = {
       status: string;
       businessHours: number;
     }>;
+  }>;
+  testTimesByAssignee: Array<{
+    assignee: string;
+    businessHours: number;
+    statusTimes: Array<{
+      status: string;
+      businessHours: number;
+    }>;
+  }>;
+  doubleCheckTimesByAssignee: Array<{
+    assignee: string;
+    businessHours: number;
+    statusTimes: Array<{
+      status: string;
+      businessHours: number;
+    }>;
+  }>;
+  actionLog: Array<{
+    actionId: string;
+    at: string;
+    actionType: 'STATUS_CHANGE' | 'ASSIGNEE_CHANGE';
+    actor: string;
+    from: string | null;
+    to: string | null;
+    businessHoursSincePreviousAction: number | null;
   }>;
 };
 
@@ -149,6 +176,10 @@ type ProgressPayload = {
     jiraActivitiesTotal: number;
     jiraDoneCount: number;
     jiraInProgressCount: number;
+    jiraStoryPointsTotal: number;
+    jiraStoryPointsDone: number;
+    jiraStoryPointsInProgress: number;
+    jiraUnestimatedCount: number;
     githubOpenPrCount: number;
   };
   goals: DevelopmentGoal[];
@@ -162,6 +193,7 @@ type ProgressPayload = {
     sprintNames: string[];
     maxIssues: number;
     jql: string | null;
+    storyPointsField?: string | null;
   };
   githubFilters?: {
     organization: string | null;
@@ -203,6 +235,31 @@ const goalStatusColor: Record<GoalStatus, string> = {
   BLOCKED: 'red',
   DONE: 'green'
 };
+
+const roleLabelMap: Record<PersonSummary['role'], string> = {
+  DEV: 'Dev',
+  QA: 'QA',
+  BA: 'BA',
+  PO: 'PO',
+  UX: 'UX',
+  TECH_LEAD: 'Tech Lead',
+  QA_LEAD: 'QA Lead',
+  MANAGER: 'Gestor'
+};
+
+const seniorityLabelMap: Record<PersonSummary['seniority'], string> = {
+  INTERN: 'Estagiário',
+  JUNIOR: 'Júnior',
+  MID: 'Pleno',
+  SENIOR: 'Sênior',
+  STAFF: 'Especialista'
+};
+
+const rolesWithoutSeniority = new Set<PersonSummary['role']>(['PO', 'BA', 'TECH_LEAD', 'QA_LEAD']);
+
+function roleSupportsSeniority(role: PersonSummary['role']) {
+  return !rolesWithoutSeniority.has(role);
+}
 
 function PerformanceTrendTag({ trend }: { trend: 'up' | 'down' | 'stable' }) {
   if (trend === 'up') {
@@ -246,23 +303,30 @@ function PerformanceLineChart({ sessions }: { sessions: OneOnOneSession[] }) {
   const polylinePoints = points.map((point) => `${point.x},${point.y}`).join(' ');
 
   return (
-    <svg viewBox="0 0 340 150" width="100%" height="220" role="img" aria-label="Evolução de desempenho">
-      <rect x={0} y={0} width={340} height={150} fill="#f8fafc" rx={10} />
-      <line x1={24} y1={132} x2={316} y2={132} stroke="#d1d5db" strokeWidth={1} />
-      <line x1={24} y1={36} x2={24} y2={132} stroke="#d1d5db" strokeWidth={1} />
-      <polyline fill="none" stroke="#1677ff" strokeWidth={3} strokeLinecap="round" points={polylinePoints} />
-      {points.map((point) => (
-        <g key={`${point.date}-${point.score}`}>
-          <circle cx={point.x} cy={point.y} r={5} fill="#1677ff" />
-        </g>
-      ))}
-      <text x={8} y={40} fill="#6b7280" fontSize={10}>
-        10
-      </text>
-      <text x={10} y={136} fill="#6b7280" fontSize={10}>
-        1
-      </text>
-    </svg>
+    <div style={{ width: '100%', maxWidth: 1024, margin: '0 auto' }}>
+      <svg
+        viewBox="0 0 340 150"
+        role="img"
+        aria-label="Evolução de desempenho"
+        style={{ display: 'block', width: '100%', height: 'auto' }}
+      >
+        <rect x={0} y={0} width={340} height={150} fill="#f8fafc" rx={10} />
+        <line x1={24} y1={132} x2={316} y2={132} stroke="#d1d5db" strokeWidth={1} />
+        <line x1={24} y1={36} x2={24} y2={132} stroke="#d1d5db" strokeWidth={1} />
+        <polyline fill="none" stroke="#1677ff" strokeWidth={3} strokeLinecap="round" points={polylinePoints} />
+        {points.map((point) => (
+          <g key={`${point.date}-${point.score}`}>
+            <circle cx={point.x} cy={point.y} r={5} fill="#1677ff" />
+          </g>
+        ))}
+        <text x={8} y={40} fill="#6b7280" fontSize={10}>
+          10
+        </text>
+        <text x={10} y={136} fill="#6b7280" fontSize={10}>
+          1
+        </text>
+      </svg>
+    </div>
   );
 }
 
@@ -294,9 +358,12 @@ export function PeopleProgress() {
   const [loadingProgress, setLoadingProgress] = useState(false);
   const [savingGoal, setSavingGoal] = useState(false);
   const [savingSession, setSavingSession] = useState(false);
+  const [deletingGoal, setDeletingGoal] = useState(false);
+  const [deletingSession, setDeletingSession] = useState(false);
   const [goalModalOpen, setGoalModalOpen] = useState(false);
   const [sessionModalOpen, setSessionModalOpen] = useState(false);
   const [editingGoal, setEditingGoal] = useState<DevelopmentGoal | null>(null);
+  const [editingSession, setEditingSession] = useState<OneOnOneSession | null>(null);
   const [progress, setProgress] = useState<ProgressPayload | null>(null);
   const [jiraIssueModalOpen, setJiraIssueModalOpen] = useState(false);
   const [jiraIssueLoading, setJiraIssueLoading] = useState(false);
@@ -308,6 +375,8 @@ export function PeopleProgress() {
   const [jiraPageSize, setJiraPageSize] = useState(8);
   const [pullRequestsCurrentPage, setPullRequestsCurrentPage] = useState(1);
   const [pullRequestsPageSize, setPullRequestsPageSize] = useState(8);
+  const [sessionsCurrentPage, setSessionsCurrentPage] = useState(1);
+  const [sessionsPageSize, setSessionsPageSize] = useState(6);
   const [messageApi, contextHolder] = message.useMessage();
 
   useEffect(() => {
@@ -506,6 +575,7 @@ export function PeopleProgress() {
     setGoalsCurrentPage(1);
     setJiraCurrentPage(1);
     setPullRequestsCurrentPage(1);
+    setSessionsCurrentPage(1);
     setJiraIssueModalOpen(false);
     setJiraIssueDetail(null);
     setJiraIssueDetailKey(null);
@@ -542,6 +612,7 @@ export function PeopleProgress() {
   };
 
   const openSessionModal = () => {
+    setEditingSession(null);
     sessionForm.setFieldsValue({
       meetingDate: dayjs(),
       performanceScore: 7,
@@ -553,8 +624,22 @@ export function PeopleProgress() {
     setSessionModalOpen(true);
   };
 
+  const openEditSessionModal = (session: OneOnOneSession) => {
+    setEditingSession(session);
+    sessionForm.setFieldsValue({
+      meetingDate: dayjs(session.meetingDate),
+      performanceScore: session.performanceScore,
+      summary: session.summary,
+      highlights: session.highlights ?? '',
+      blockers: session.blockers ?? '',
+      nextSteps: session.nextSteps ?? ''
+    });
+    setSessionModalOpen(true);
+  };
+
   const closeSessionModal = () => {
     setSessionModalOpen(false);
+    setEditingSession(null);
     sessionForm.resetFields();
   };
 
@@ -603,6 +688,37 @@ export function PeopleProgress() {
     }
   };
 
+  const handleDeleteGoal = async () => {
+    if (!token || !selectedPersonId || !editingGoal) {
+      return;
+    }
+
+    setDeletingGoal(true);
+
+    try {
+      const response = await fetch(`${apiUrl}/people/${selectedPersonId}/progress/goals/${editingGoal.id}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) {
+        const data = (await response.json()) as { message?: string };
+        throw new Error(data.message ?? 'Não foi possível remover a meta');
+      }
+
+      messageApi.success('Meta removida');
+      closeGoalModal();
+      await loadProgress(token, selectedPersonId);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Erro ao remover meta';
+      messageApi.error(errorMessage);
+    } finally {
+      setDeletingGoal(false);
+    }
+  };
+
   const handleSaveSession = async (values: SessionFormValues) => {
     if (!token || !selectedPersonId) {
       return;
@@ -611,8 +727,13 @@ export function PeopleProgress() {
     setSavingSession(true);
 
     try {
-      const response = await fetch(`${apiUrl}/people/${selectedPersonId}/progress/sessions`, {
-        method: 'POST',
+      const endpoint = editingSession
+        ? `${apiUrl}/people/${selectedPersonId}/progress/sessions/${editingSession.id}`
+        : `${apiUrl}/people/${selectedPersonId}/progress/sessions`;
+      const method = editingSession ? 'PATCH' : 'POST';
+
+      const response = await fetch(endpoint, {
+        method,
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
@@ -630,17 +751,51 @@ export function PeopleProgress() {
       const data = (await response.json()) as { message?: string };
 
       if (!response.ok) {
-        throw new Error(data.message ?? 'Não foi possível registrar o 1:1');
+        throw new Error(data.message ?? 'Não foi possível salvar a sessão 1:1');
       }
 
-      messageApi.success('Sessão 1:1 registrada');
+      messageApi.success(editingSession ? 'Sessão 1:1 atualizada' : 'Sessão 1:1 registrada');
       closeSessionModal();
       await loadProgress(token, selectedPersonId);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Erro ao registrar 1:1';
+      const errorMessage = error instanceof Error ? error.message : 'Erro ao salvar sessão 1:1';
       messageApi.error(errorMessage);
     } finally {
       setSavingSession(false);
+    }
+  };
+
+  const handleDeleteSession = async () => {
+    if (!token || !selectedPersonId || !editingSession) {
+      return;
+    }
+
+    setDeletingSession(true);
+
+    try {
+      const response = await fetch(
+        `${apiUrl}/people/${selectedPersonId}/progress/sessions/${editingSession.id}`,
+        {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      );
+
+      if (!response.ok) {
+        const data = (await response.json()) as { message?: string };
+        throw new Error(data.message ?? 'Não foi possível remover a sessão 1:1');
+      }
+
+      messageApi.success('Sessão 1:1 removida');
+      closeSessionModal();
+      await loadProgress(token, selectedPersonId);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Erro ao remover sessão 1:1';
+      messageApi.error(errorMessage);
+    } finally {
+      setDeletingSession(false);
     }
   };
 
@@ -652,7 +807,13 @@ export function PeopleProgress() {
     }
 
     return people.filter((person) =>
-      `${person.name} ${person.email} ${person.role} ${person.seniority}`.toLowerCase().includes(normalizedSearch)
+      `${person.name} ${person.email} ${person.role} ${
+        roleSupportsSeniority(person.role) ? person.seniority : ''
+      } ${roleLabelMap[person.role]} ${
+        roleSupportsSeniority(person.role) ? seniorityLabelMap[person.seniority] : ''
+      }`
+        .toLowerCase()
+        .includes(normalizedSearch)
     );
   }, [people, peopleSearch]);
 
@@ -857,8 +1018,10 @@ export function PeopleProgress() {
                           title={
                             <Space size={8} wrap>
                               <Typography.Text strong>{person.name}</Typography.Text>
-                              <Tag>{person.role}</Tag>
-                              <Tag>{person.seniority}</Tag>
+                              <Tag>{roleLabelMap[person.role]}</Tag>
+                              {roleSupportsSeniority(person.role) ? (
+                                <Tag>{seniorityLabelMap[person.seniority]}</Tag>
+                              ) : null}
                             </Space>
                           }
                           description={person.email}
@@ -954,7 +1117,10 @@ export function PeopleProgress() {
                         {progress.person.name}
                       </Typography.Title>
                       <Typography.Text type="secondary">
-                        {progress.person.email} • {progress.person.role} • {progress.person.seniority}
+                        {progress.person.email} • {roleLabelMap[progress.person.role]}
+                        {roleSupportsSeniority(progress.person.role)
+                          ? ` • ${seniorityLabelMap[progress.person.seniority]}`
+                          : ''}
                       </Typography.Text>
                       <br />
                       <Space size={8} style={{ marginTop: 8 }} wrap>
@@ -982,6 +1148,15 @@ export function PeopleProgress() {
                   <Card style={{ minWidth: 180 }}>
                     <Statistic title="PRs abertos" value={progress.metrics.githubOpenPrCount} />
                   </Card>
+                  <Card style={{ minWidth: 200 }}>
+                    <Statistic title="Story Points (total)" value={progress.metrics.jiraStoryPointsTotal} />
+                  </Card>
+                  <Card style={{ minWidth: 200 }}>
+                    <Statistic title="Story Points concluídos" value={progress.metrics.jiraStoryPointsDone} />
+                  </Card>
+                  <Card style={{ minWidth: 220 }}>
+                    <Statistic title="Atividades sem estimativa" value={progress.metrics.jiraUnestimatedCount} />
+                  </Card>
                   <Card style={{ minWidth: 220 }}>
                     <Typography.Text type="secondary">Progresso médio das metas</Typography.Text>
                     <Progress percent={Math.round(progress.metrics.goalsAvgProgress)} />
@@ -992,6 +1167,18 @@ export function PeopleProgress() {
                       percent={
                         progress.metrics.jiraActivitiesTotal > 0
                           ? Math.round((progress.metrics.jiraDoneCount / progress.metrics.jiraActivitiesTotal) * 100)
+                          : 0
+                      }
+                    />
+                  </Card>
+                  <Card style={{ minWidth: 240 }}>
+                    <Typography.Text type="secondary">Conclusão Jira por Story Points</Typography.Text>
+                    <Progress
+                      percent={
+                        progress.metrics.jiraStoryPointsTotal > 0
+                          ? Math.round(
+                              (progress.metrics.jiraStoryPointsDone / progress.metrics.jiraStoryPointsTotal) * 100
+                            )
                           : 0
                       }
                     />
@@ -1017,6 +1204,10 @@ export function PeopleProgress() {
                       dataSource={progress.goals}
                       size={isMobile ? 'small' : 'middle'}
                       scroll={{ x: 760 }}
+                      onRow={(goal) => ({
+                        onClick: () => openEditGoalModal(goal),
+                        style: { cursor: 'pointer' }
+                      })}
                       pagination={{
                         current: goalsCurrentPage,
                         pageSize: goalsPageSize,
@@ -1109,15 +1300,6 @@ export function PeopleProgress() {
                           },
                           render: (targetDate: string | null) =>
                             targetDate ? dayjs(targetDate).format('DD/MM/YYYY') : 'Sem prazo'
-                        },
-                        {
-                          title: 'Ações',
-                          key: 'actions',
-                          render: (_: unknown, goal: DevelopmentGoal) => (
-                            <Button size="small" onClick={() => openEditGoalModal(goal)}>
-                              Editar
-                            </Button>
-                          )
                         }
                       ]}
                     />
@@ -1135,28 +1317,72 @@ export function PeopleProgress() {
                     {progress.oneOnOnes.length === 0 ? (
                       <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Sem sessões registradas" />
                     ) : (
-                      <Timeline
-                        items={progress.oneOnOnes.map((session) => ({
-                          color:
-                            session.performanceScore >= 8
-                              ? 'green'
-                              : session.performanceScore >= 6
-                                ? 'blue'
-                                : 'red',
-                          children: (
-                            <Space direction="vertical" size={2}>
-                              <Typography.Text strong>
-                                {dayjs(session.meetingDate).format('DD/MM/YYYY')} • Nota {session.performanceScore}/10
-                              </Typography.Text>
-                              <Typography.Text>{session.summary}</Typography.Text>
-                              {session.nextSteps ? (
-                                <Typography.Text type="secondary">
-                                  Próximos passos: {session.nextSteps}
-                                </Typography.Text>
-                              ) : null}
-                            </Space>
-                          )
-                        }))}
+                      <Table<OneOnOneSession>
+                        rowKey="id"
+                        dataSource={progress.oneOnOnes}
+                        size={isMobile ? 'small' : 'middle'}
+                        scroll={{ x: 760 }}
+                        onRow={(session) => ({
+                          onClick: () => openEditSessionModal(session),
+                          style: { cursor: 'pointer' }
+                        })}
+                        pagination={{
+                          current: sessionsCurrentPage,
+                          pageSize: sessionsPageSize,
+                          showSizeChanger: true,
+                          showQuickJumper: true,
+                          pageSizeOptions: ['5', '10', '20', '50'],
+                          showTotal: (total, range) => `${range[0]}-${range[1]} de ${total} sessões`,
+                          onChange: (page, pageSize) => {
+                            setSessionsCurrentPage(page);
+                            setSessionsPageSize(pageSize);
+                          }
+                        }}
+                        columns={[
+                          {
+                            title: 'Data',
+                            dataIndex: 'meetingDate',
+                            defaultSortOrder: 'descend',
+                            sorter: (a, b) => dayjs(a.meetingDate).valueOf() - dayjs(b.meetingDate).valueOf(),
+                            render: (value: string) => dayjs(value).format('DD/MM/YYYY HH:mm')
+                          },
+                          {
+                            title: 'Nota',
+                            dataIndex: 'performanceScore',
+                            filters: [
+                              { text: 'Alta (8-10)', value: 'HIGH' },
+                              { text: 'Média (6-7)', value: 'MID' },
+                              { text: 'Baixa (1-5)', value: 'LOW' }
+                            ],
+                            onFilter: (value, session) => {
+                              if (value === 'HIGH') {
+                                return session.performanceScore >= 8;
+                              }
+                              if (value === 'MID') {
+                                return session.performanceScore >= 6 && session.performanceScore < 8;
+                              }
+                              return session.performanceScore <= 5;
+                            },
+                            render: (value: number) => {
+                              const color = value >= 8 ? 'green' : value >= 6 ? 'blue' : 'red';
+                              return <Tag color={color}>{value}/10</Tag>;
+                            }
+                          },
+                          {
+                            title: 'Resumo',
+                            dataIndex: 'summary',
+                            render: (summary: string, session: OneOnOneSession) => (
+                              <Space direction="vertical" size={0}>
+                                <Typography.Text strong>{summary}</Typography.Text>
+                                {session.nextSteps ? (
+                                  <Typography.Text type="secondary">
+                                    Próximos passos: {session.nextSteps}
+                                  </Typography.Text>
+                                ) : null}
+                              </Space>
+                            )
+                          }
+                        ]}
                       />
                     )}
                   </Card>
@@ -1218,6 +1444,24 @@ export function PeopleProgress() {
                         filters: jiraTypeFilters,
                         filterSearch: true,
                         onFilter: (value, activity) => activity.issueType === value
+                      },
+                      {
+                        title: 'Story Points',
+                        dataIndex: 'storyPoints',
+                        width: 130,
+                        sorter: (a, b) => (a.storyPoints ?? -1) - (b.storyPoints ?? -1),
+                        filters: [
+                          { text: 'Com points', value: 'HAS_POINTS' },
+                          { text: 'Sem points', value: 'NO_POINTS' }
+                        ],
+                        onFilter: (value, activity) => {
+                          if (value === 'HAS_POINTS') {
+                            return activity.storyPoints !== null;
+                          }
+
+                          return activity.storyPoints === null;
+                        },
+                        render: (value: number | null) => (value === null ? '-' : value)
                       },
                       {
                         title: 'Status',
@@ -1355,6 +1599,18 @@ export function PeopleProgress() {
                 <Typography.Text>
                   Total em horas úteis: <Typography.Text strong>{formatBusinessHours(jiraIssueDetail.summary.totalBusinessHours)}</Typography.Text>
                 </Typography.Text>
+                <Typography.Text>
+                  Teste em horas úteis:{' '}
+                  <Typography.Text strong>
+                    {formatBusinessHours(jiraIssueDetail.summary.totalTestBusinessHours)}
+                  </Typography.Text>
+                </Typography.Text>
+                <Typography.Text>
+                  Double check em horas úteis:{' '}
+                  <Typography.Text strong>
+                    {formatBusinessHours(jiraIssueDetail.summary.totalDoubleCheckBusinessHours)}
+                  </Typography.Text>
+                </Typography.Text>
                 <Typography.Link href={jiraIssueDetail.issue.issueUrl} target="_blank">
                   Abrir issue no Jira
                 </Typography.Link>
@@ -1416,6 +1672,124 @@ export function PeopleProgress() {
                 ]}
               />
             </Card>
+
+            <Card size="small" title="Tempo em teste por responsável">
+              <Table<{
+                assignee: string;
+                businessHours: number;
+                statusTimes: Array<{ status: string; businessHours: number }>;
+              }>
+                rowKey="assignee"
+                dataSource={jiraIssueDetail.testTimesByAssignee}
+                size="small"
+                pagination={false}
+                locale={{ emptyText: 'Sem tempo em etapas de teste para esta issue.' }}
+                columns={[
+                  {
+                    title: 'Responsável',
+                    dataIndex: 'assignee'
+                  },
+                  {
+                    title: 'Horas úteis em teste',
+                    dataIndex: 'businessHours',
+                    sorter: (a, b) => a.businessHours - b.businessHours,
+                    defaultSortOrder: 'descend',
+                    render: (value: number) => formatBusinessHours(value)
+                  },
+                  {
+                    title: 'Detalhe por etapa',
+                    dataIndex: 'statusTimes',
+                    render: (statusTimes: Array<{ status: string; businessHours: number }>) =>
+                      statusTimes.map((item) => `${item.status}: ${formatBusinessHours(item.businessHours)}`).join(' • ')
+                  }
+                ]}
+              />
+            </Card>
+
+            <Card size="small" title="Tempo em double check por responsável">
+              <Table<{
+                assignee: string;
+                businessHours: number;
+                statusTimes: Array<{ status: string; businessHours: number }>;
+              }>
+                rowKey="assignee"
+                dataSource={jiraIssueDetail.doubleCheckTimesByAssignee}
+                size="small"
+                pagination={false}
+                locale={{ emptyText: 'Sem tempo em etapas de double check para esta issue.' }}
+                columns={[
+                  {
+                    title: 'Responsável',
+                    dataIndex: 'assignee'
+                  },
+                  {
+                    title: 'Horas úteis em double check',
+                    dataIndex: 'businessHours',
+                    sorter: (a, b) => a.businessHours - b.businessHours,
+                    defaultSortOrder: 'descend',
+                    render: (value: number) => formatBusinessHours(value)
+                  },
+                  {
+                    title: 'Detalhe por etapa',
+                    dataIndex: 'statusTimes',
+                    render: (statusTimes: Array<{ status: string; businessHours: number }>) =>
+                      statusTimes.map((item) => `${item.status}: ${formatBusinessHours(item.businessHours)}`).join(' • ')
+                  }
+                ]}
+              />
+            </Card>
+
+            <Card size="small" title="Histórico de ações (quem fez)">
+              <Table<{
+                actionId: string;
+                at: string;
+                actionType: 'STATUS_CHANGE' | 'ASSIGNEE_CHANGE';
+                actor: string;
+                from: string | null;
+                to: string | null;
+                businessHoursSincePreviousAction: number | null;
+              }>
+                rowKey="actionId"
+                dataSource={jiraIssueDetail.actionLog}
+                size="small"
+                pagination={false}
+                locale={{ emptyText: 'Sem ações registradas no histórico desta issue.' }}
+                columns={[
+                  {
+                    title: 'Data',
+                    dataIndex: 'at',
+                    defaultSortOrder: 'ascend',
+                    sorter: (a, b) => dayjs(a.at).valueOf() - dayjs(b.at).valueOf(),
+                    render: (value: string) => dayjs(value).format('DD/MM/YYYY HH:mm')
+                  },
+                  {
+                    title: 'Ação',
+                    dataIndex: 'actionType',
+                    render: (value: 'STATUS_CHANGE' | 'ASSIGNEE_CHANGE') =>
+                      value === 'STATUS_CHANGE' ? 'Mudança de status' : 'Mudança de responsável'
+                  },
+                  {
+                    title: 'De',
+                    dataIndex: 'from',
+                    render: (value: string | null) => value || '-'
+                  },
+                  {
+                    title: 'Para',
+                    dataIndex: 'to',
+                    render: (value: string | null) => value || '-'
+                  },
+                  {
+                    title: 'Feito por',
+                    dataIndex: 'actor'
+                  },
+                  {
+                    title: 'Horas úteis desde a ação anterior',
+                    dataIndex: 'businessHoursSincePreviousAction',
+                    render: (value: number | null) => (value === null ? '-' : formatBusinessHours(value))
+                  }
+                ]}
+              />
+            </Card>
           </Flex>
         ) : (
           <Empty description={jiraIssueDetailKey ? `Sem detalhes para ${jiraIssueDetailKey}` : 'Selecione uma tarefa'} />
@@ -1426,10 +1800,31 @@ export function PeopleProgress() {
         title={editingGoal ? 'Editar meta' : 'Nova meta'}
         open={goalModalOpen}
         onCancel={closeGoalModal}
-        onOk={() => goalForm.submit()}
-        confirmLoading={savingGoal}
-        okText={editingGoal ? 'Salvar' : 'Criar'}
-        cancelText="Cancelar"
+        footer={[
+          editingGoal ? (
+            <Button
+              key="delete-goal"
+              danger
+              loading={deletingGoal}
+              disabled={savingGoal || deletingGoal}
+              onClick={() => void handleDeleteGoal()}
+            >
+              Remover
+            </Button>
+          ) : null,
+          <Button key="cancel-goal" onClick={closeGoalModal} disabled={savingGoal || deletingGoal}>
+            Cancelar
+          </Button>,
+          <Button
+            key="save-goal"
+            type="primary"
+            loading={savingGoal}
+            disabled={deletingGoal}
+            onClick={() => goalForm.submit()}
+          >
+            {editingGoal ? 'Salvar' : 'Criar'}
+          </Button>
+        ]}
         width={isMobile ? 'calc(100vw - 24px)' : 620}
         centered={!isMobile}
         style={isMobile ? { top: 12 } : undefined}
@@ -1465,13 +1860,38 @@ export function PeopleProgress() {
       </Modal>
 
       <Modal
-        title="Registrar 1:1"
+        title={editingSession ? 'Editar 1:1' : 'Registrar 1:1'}
         open={sessionModalOpen}
         onCancel={closeSessionModal}
-        onOk={() => sessionForm.submit()}
-        confirmLoading={savingSession}
-        okText="Salvar"
-        cancelText="Cancelar"
+        footer={[
+          editingSession ? (
+            <Button
+              key="delete-session"
+              danger
+              loading={deletingSession}
+              disabled={savingSession || deletingSession}
+              onClick={() => void handleDeleteSession()}
+            >
+              Remover
+            </Button>
+          ) : null,
+          <Button
+            key="cancel-session"
+            onClick={closeSessionModal}
+            disabled={savingSession || deletingSession}
+          >
+            Cancelar
+          </Button>,
+          <Button
+            key="save-session"
+            type="primary"
+            loading={savingSession}
+            disabled={deletingSession}
+            onClick={() => sessionForm.submit()}
+          >
+            Salvar
+          </Button>
+        ]}
         width={isMobile ? 'calc(100vw - 24px)' : 680}
         centered={!isMobile}
         style={isMobile ? { top: 12 } : undefined}

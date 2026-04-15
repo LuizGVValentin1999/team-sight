@@ -99,6 +99,12 @@ const seniorityLabelMap: Record<Person['seniority'], string> = {
   STAFF: 'Especialista'
 };
 
+const rolesWithoutSeniority = new Set<Person['role']>(['PO', 'BA', 'TECH_LEAD', 'QA_LEAD']);
+
+function roleSupportsSeniority(role: Person['role']) {
+  return !rolesWithoutSeniority.has(role);
+}
+
 async function fileToDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -127,6 +133,7 @@ export function PeopleManager() {
   const [autoLinkModalOpen, setAutoLinkModalOpen] = useState(false);
   const [editingPerson, setEditingPerson] = useState<Person | null>(null);
   const [messageApi, contextHolder] = message.useMessage();
+  const selectedRole = Form.useWatch('role', form);
 
   useEffect(() => {
     setMounted(true);
@@ -240,6 +247,16 @@ export function PeopleManager() {
     void loadPeople(token);
   }, [token, loadPeople]);
 
+  useEffect(() => {
+    if (!selectedRole) {
+      return;
+    }
+
+    if (!roleSupportsSeniority(selectedRole)) {
+      form.setFieldValue('seniority', 'STAFF');
+    }
+  }, [selectedRole, form]);
+
   const currentAvatarUrl = Form.useWatch('avatarUrl', form) ?? '';
 
   const handleAvatarSelect = async (file: File) => {
@@ -347,17 +364,19 @@ export function PeopleManager() {
         method = 'PATCH';
       }
 
-      const response = await fetch(
-        endpoint,
-        {
-          method,
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`
-          },
-          body: JSON.stringify(values)
-        }
-      );
+      const payloadToSave = {
+        ...values,
+        seniority: roleSupportsSeniority(values.role) ? values.seniority : ('STAFF' as const)
+      };
+
+      const response = await fetch(endpoint, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(payloadToSave)
+      });
 
       const data = (await response.json()) as {
         person?: Person;
@@ -471,7 +490,7 @@ export function PeopleManager() {
     <AppShell
       selectedPath="/people"
       title="Pessoas"
-      subtitle="Gerencie membros do time com cargo e nível"
+      subtitle="Gerencie membros do time com cargo e nível quando aplicável"
       currentUserName={currentUser?.name}
     >
       {contextHolder}
@@ -548,9 +567,12 @@ export function PeopleManager() {
                 title: 'Nível',
                 dataIndex: 'seniority',
                 width: 130,
-                render: (seniority: Person['seniority']) => (
-                  <Tag color="blue">{seniorityLabelMap[seniority]}</Tag>
-                )
+                render: (seniority: Person['seniority'], person: Person) =>
+                  roleSupportsSeniority(person.role) ? (
+                    <Tag color="blue">{seniorityLabelMap[seniority]}</Tag>
+                  ) : (
+                    <Typography.Text type="secondary">-</Typography.Text>
+                  )
               },
               {
                 title: 'Status',
@@ -641,13 +663,15 @@ export function PeopleManager() {
             <Select options={roleOptions} size="large" />
           </Form.Item>
 
-          <Form.Item
-            label="Nível"
-            name="seniority"
-            rules={[{ required: true, message: 'Selecione um nível' }]}
-          >
-            <Select options={seniorityOptions} size="large" />
-          </Form.Item>
+          {selectedRole && roleSupportsSeniority(selectedRole) ? (
+            <Form.Item
+              label="Nível"
+              name="seniority"
+              rules={[{ required: true, message: 'Selecione um nível' }]}
+            >
+              <Select options={seniorityOptions} size="large" />
+            </Form.Item>
+          ) : null}
 
           <Form.Item label="Status" name="active" valuePropName="checked">
             <Switch checkedChildren="Ativo" unCheckedChildren="Inativo" />

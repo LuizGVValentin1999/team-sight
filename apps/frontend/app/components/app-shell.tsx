@@ -1,6 +1,6 @@
 'use client';
 
-import { BarChartOutlined, TeamOutlined, LineChartOutlined } from '@ant-design/icons';
+import { BarChartOutlined, TeamOutlined, LineChartOutlined, ApartmentOutlined } from '@ant-design/icons';
 import { Button, Flex, Layout, Menu, Typography } from 'antd';
 import type { MenuProps } from 'antd';
 import { useRouter } from 'next/navigation';
@@ -30,6 +30,11 @@ const menuItems: MenuProps['items'] = [
     key: '/people/progress',
     icon: <LineChartOutlined />,
     label: 'Acompanhamento'
+  },
+  {
+    key: '/squads',
+    icon: <ApartmentOutlined />,
+    label: 'Squads'
   }
 ];
 

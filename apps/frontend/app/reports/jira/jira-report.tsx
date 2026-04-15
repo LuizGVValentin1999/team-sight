@@ -7,16 +7,20 @@ import {
   Alert,
   Button,
   Card,
+  Empty,
   Flex,
   Form,
+  Grid,
   Input,
   InputNumber,
+  Modal,
   Space,
   Table,
   Tag,
   Typography,
   message
 } from 'antd';
+import dayjs from 'dayjs';
 import { AppLoading } from '../../components/app-loading';
 import { AppShell } from '../../components/app-shell';
 
@@ -29,7 +33,19 @@ type JiraReportFormValues = {
   jql?: string;
 };
 
-type JiraReportResponse = {
+type JiraActivity = {
+  key: string;
+  issueUrl: string;
+  summary: string;
+  status: string;
+  issueType: string;
+  storyPoints: number | null;
+  createdAt: string;
+  updatedAt: string;
+  isDone: boolean;
+};
+
+type JiraActivitiesResponse = {
   period: {
     start: string;
     end: string;
@@ -41,65 +57,130 @@ type JiraReportResponse = {
     sprintNames: string[];
     jql: string;
     maxIssues: number;
+    storyPointsField: string | null;
   };
   summary: {
-    issuesAnalyzed: number;
-    statusesFound: number;
-    peopleInvolved: number;
+    activitiesTotal: number;
+    doneCount: number;
+    inProgressCount: number;
+    storyPointsTotal: number;
+    storyPointsDone: number;
+    storyPointsInProgress: number;
+    unestimatedCount: number;
   };
-  statusTotals: Array<{
-    status: string;
-    totalHours: number;
-    avgHoursPerIssue: number;
-  }>;
-  issues: Array<{
+  activities: JiraActivity[];
+};
+
+type JiraIssueDetailsPayload = {
+  issue: {
     key: string;
     summary: string;
+    issueUrl: string;
+    createdAt: string;
     currentStatus: string;
-    totalHoursInPeriod: number;
+    currentAssignee: string;
+  };
+  businessHoursConfig: {
+    timezone: string;
+    workdays: string[];
+    windows: string[];
+  };
+  summary: {
+    totalBusinessHours: number;
+    totalTestBusinessHours: number;
+    totalDoubleCheckBusinessHours: number;
+  };
+  statusTimes: Array<{
+    status: string;
+    businessHours: number;
+  }>;
+  codeTimesByAssignee: Array<{
+    assignee: string;
+    businessHours: number;
     statusTimes: Array<{
       status: string;
-      hours: number;
+      businessHours: number;
     }>;
-    involvedPeople: Array<{
-      id: string;
-      name: string;
-      sources: string[];
+  }>;
+  testTimesByAssignee: Array<{
+    assignee: string;
+    businessHours: number;
+    statusTimes: Array<{
+      status: string;
+      businessHours: number;
     }>;
+  }>;
+  doubleCheckTimesByAssignee: Array<{
+    assignee: string;
+    businessHours: number;
+    statusTimes: Array<{
+      status: string;
+      businessHours: number;
+    }>;
+  }>;
+  actionLog: Array<{
+    actionId: string;
+    at: string;
+    actionType: 'STATUS_CHANGE' | 'ASSIGNEE_CHANGE';
+    actor: string;
+    from: string | null;
+    to: string | null;
+    businessHoursSincePreviousAction: number | null;
   }>;
 };
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3333';
 
+function formatBusinessHours(value: number) {
+  return `${value.toFixed(2)} h`;
+}
+
 export function JiraReport() {
   const router = useRouter();
+  const screens = Grid.useBreakpoint();
+  const isMobile = !screens.md;
   const [form] = Form.useForm<JiraReportFormValues>();
   const [mounted, setMounted] = useState(false);
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [report, setReport] = useState<JiraReportResponse | null>(null);
+  const [report, setReport] = useState<JiraActivitiesResponse | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [messageApi, contextHolder] = message.useMessage();
+  const [jiraCurrentPage, setJiraCurrentPage] = useState(1);
+  const [jiraPageSize, setJiraPageSize] = useState(10);
+  const [jiraIssueModalOpen, setJiraIssueModalOpen] = useState(false);
+  const [jiraIssueLoading, setJiraIssueLoading] = useState(false);
+  const [jiraIssueDetail, setJiraIssueDetail] = useState<JiraIssueDetailsPayload | null>(null);
+  const [jiraIssueDetailKey, setJiraIssueDetailKey] = useState<string | null>(null);
 
-  const peopleFilterOptions = useMemo(() => {
+  const jiraKeyFilters = useMemo(() => {
     if (!report) {
       return [];
     }
 
-    const names = new Set<string>();
+    return Array.from(new Set(report.activities.map((activity) => activity.key)))
+      .sort((a, b) => a.localeCompare(b, 'pt-BR'))
+      .map((key) => ({ text: key, value: key }));
+  }, [report]);
 
-    for (const issue of report.issues) {
-      for (const person of issue.involvedPeople) {
-        names.add(person.name);
-      }
+  const jiraTypeFilters = useMemo(() => {
+    if (!report) {
+      return [];
     }
 
-    return Array.from(names)
+    return Array.from(new Set(report.activities.map((activity) => activity.issueType)))
       .sort((a, b) => a.localeCompare(b, 'pt-BR'))
-      .map((name) => ({
-        text: name,
-        value: name
-      }));
+      .map((issueType) => ({ text: issueType, value: issueType }));
+  }, [report]);
+
+  const jiraStatusFilters = useMemo(() => {
+    if (!report) {
+      return [];
+    }
+
+    return Array.from(new Set(report.activities.map((activity) => activity.status)))
+      .sort((a, b) => a.localeCompare(b, 'pt-BR'))
+      .map((status) => ({ text: status, value: status }));
   }, [report]);
 
   useEffect(() => {
@@ -150,20 +231,20 @@ export function JiraReport() {
         params.set('sprintNames', values.sprintNames.trim());
       }
 
-      const response = await fetch(`${apiUrl}/reports/jira/kanban-time?${params.toString()}`, {
+      const response = await fetch(`${apiUrl}/reports/jira/activities?${params.toString()}`, {
         headers: {
           Authorization: `Bearer ${token}`
         }
       });
 
-      const data = (await response.json()) as JiraReportResponse & { message?: string };
+      const data = (await response.json()) as JiraActivitiesResponse & { message?: string };
 
       if (!response.ok) {
-        throw new Error(data.message ?? 'Falha ao carregar relatório do Jira');
+        throw new Error(data.message ?? 'Falha ao carregar atividades do Jira');
       }
 
       setReport(data);
-      messageApi.success('Relatório do Jira carregado');
+      setJiraCurrentPage(1);
     } catch (error) {
       const text = error instanceof Error ? error.message : 'Erro inesperado';
       setErrorMessage(text);
@@ -173,16 +254,52 @@ export function JiraReport() {
     }
   };
 
+  const closeJiraIssueModal = () => {
+    setJiraIssueModalOpen(false);
+    setJiraIssueDetailKey(null);
+    setJiraIssueDetail(null);
+  };
+
+  const openJiraIssueModal = async (issueKey: string) => {
+    if (!token) {
+      return;
+    }
+
+    setJiraIssueModalOpen(true);
+    setJiraIssueDetail(null);
+    setJiraIssueDetailKey(issueKey);
+    setJiraIssueLoading(true);
+
+    try {
+      const response = await fetch(`${apiUrl}/reports/jira/issue/${encodeURIComponent(issueKey)}/details`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      const data = (await response.json()) as JiraIssueDetailsPayload & { message?: string };
+
+      if (!response.ok) {
+        throw new Error(data.message ?? 'Não foi possível carregar os detalhes da tarefa Jira.');
+      }
+
+      setJiraIssueDetail(data);
+    } catch (error) {
+      const detailError =
+        error instanceof Error ? error.message : 'Erro ao carregar detalhes da tarefa Jira.';
+      messageApi.error(detailError);
+      setJiraIssueModalOpen(false);
+    } finally {
+      setJiraIssueLoading(false);
+    }
+  };
+
   if (!mounted || !token) {
     return <AppLoading />;
   }
 
   return (
-    <AppShell
-      selectedPath="/reports/jira"
-      title="Relatório Jira Kanban"
-      subtitle="Acompanhe atividade e tempo em cada etapa"
-    >
+    <AppShell selectedPath="/reports/jira" title="Relatório Jira" subtitle="Tabela única de atividades do Jira">
       {contextHolder}
 
       <Flex vertical gap={16}>
@@ -195,8 +312,8 @@ export function JiraReport() {
               projectKey: '',
               issueKey: '',
               sprintNames: '',
-              days: 30,
-              maxIssues: 50,
+              days: 60,
+              maxIssues: 200,
               jql: ''
             }}
           >
@@ -224,7 +341,7 @@ export function JiraReport() {
                   }
                 ]}
               >
-                <Input placeholder="TS" />
+                <Input placeholder="FLX" />
               </Form.Item>
 
               <Form.Item style={{ minWidth: 220, flex: '1 1 220px' }} label="Chave da tarefa" name="issueKey">
@@ -244,7 +361,7 @@ export function JiraReport() {
                 label="JQL customizada (opcional)"
                 name="jql"
               >
-                <Input placeholder="project = TS AND assignee = currentUser()" />
+                <Input placeholder="project = FLX AND assignee = currentUser()" />
               </Form.Item>
 
               <Form.Item style={{ width: 140 }} label="Dias" name="days">
@@ -252,13 +369,13 @@ export function JiraReport() {
               </Form.Item>
 
               <Form.Item style={{ width: 140 }} label="Máx. issues" name="maxIssues">
-                <InputNumber min={1} max={200} style={{ width: '100%' }} />
+                <InputNumber min={1} max={300} style={{ width: '100%' }} />
               </Form.Item>
 
               <Form.Item>
                 <Space>
                   <Button type="primary" htmlType="submit" loading={loading}>
-                    Carregar relatório
+                    Carregar atividades
                   </Button>
                   <Button
                     htmlType="button"
@@ -284,123 +401,345 @@ export function JiraReport() {
         {errorMessage ? <Alert type="error" showIcon message={errorMessage} /> : null}
 
         {report ? (
-          <>
-            <Flex gap={12} wrap="wrap">
-              <Card style={{ minWidth: 200 }}>
-                <Typography.Text type="secondary">Atividades analisadas</Typography.Text>
-                <Typography.Title level={3} style={{ margin: 0 }}>
-                  {report.summary.issuesAnalyzed}
-                </Typography.Title>
-              </Card>
+          <Card title={`Atividades Jira (${report.summary.activitiesTotal})`}>
+            <Table<JiraActivity>
+              rowKey="key"
+              dataSource={report.activities}
+              size={isMobile ? 'small' : 'middle'}
+              scroll={{ x: 760 }}
+              onRow={(record) => ({
+                onClick: () => {
+                  void openJiraIssueModal(record.key);
+                },
+                style: { cursor: 'pointer' }
+              })}
+              pagination={{
+                current: jiraCurrentPage,
+                pageSize: jiraPageSize,
+                showSizeChanger: true,
+                showQuickJumper: true,
+                pageSizeOptions: ['5', '10', '20', '50', '100'],
+                showTotal: (total, range) => `${range[0]}-${range[1]} de ${total} atividades`,
+                onChange: (page, pageSize) => {
+                  setJiraCurrentPage(page);
+                  setJiraPageSize(pageSize);
+                }
+              }}
+              columns={[
+                {
+                  title: 'Atividade',
+                  dataIndex: 'key',
+                  filters: jiraKeyFilters,
+                  filterSearch: true,
+                  onFilter: (value, activity) => activity.key === value,
+                  render: (key: string, activity: JiraActivity) => (
+                    <Space direction="vertical" size={0}>
+                      <Space size={8}>
+                        <Typography.Text strong>{key}</Typography.Text>
+                        <Typography.Link
+                          href={activity.issueUrl}
+                          target="_blank"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                          }}
+                        >
+                          Abrir no Jira
+                        </Typography.Link>
+                      </Space>
+                      <Typography.Text type="secondary">{activity.summary}</Typography.Text>
+                    </Space>
+                  )
+                },
+                {
+                  title: 'Tipo',
+                  dataIndex: 'issueType',
+                  filters: jiraTypeFilters,
+                  filterSearch: true,
+                  onFilter: (value, activity) => activity.issueType === value
+                },
+                {
+                  title: 'Story Points',
+                  dataIndex: 'storyPoints',
+                  width: 130,
+                  sorter: (a, b) => (a.storyPoints ?? -1) - (b.storyPoints ?? -1),
+                  filters: [
+                    { text: 'Com points', value: 'HAS_POINTS' },
+                    { text: 'Sem points', value: 'NO_POINTS' }
+                  ],
+                  onFilter: (value, activity) => {
+                    if (value === 'HAS_POINTS') {
+                      return activity.storyPoints !== null;
+                    }
 
-              <Card style={{ minWidth: 200 }}>
-                <Typography.Text type="secondary">Etapas encontradas</Typography.Text>
-                <Typography.Title level={3} style={{ margin: 0 }}>
-                  {report.summary.statusesFound}
-                </Typography.Title>
-              </Card>
+                    return activity.storyPoints === null;
+                  },
+                  render: (value: number | null) => (value === null ? '-' : value)
+                },
+                {
+                  title: 'Status',
+                  dataIndex: 'status',
+                  filters: jiraStatusFilters,
+                  filterSearch: true,
+                  onFilter: (value, activity) => activity.status === value,
+                  render: (status: string, activity: JiraActivity) => (
+                    <Tag color={activity.isDone ? 'green' : 'blue'}>{status}</Tag>
+                  )
+                },
+                {
+                  title: 'Atualizada em',
+                  dataIndex: 'updatedAt',
+                  defaultSortOrder: 'descend',
+                  sorter: (a, b) => dayjs(a.updatedAt).valueOf() - dayjs(b.updatedAt).valueOf(),
+                  filters: [
+                    { text: 'Últimos 7 dias', value: 'LAST_7' },
+                    { text: 'Últimos 30 dias', value: 'LAST_30' },
+                    { text: 'Mais de 30 dias', value: 'OLDER_30' }
+                  ],
+                  onFilter: (value, activity) => {
+                    const updatedAt = dayjs(activity.updatedAt);
+                    const daysDiff = dayjs().diff(updatedAt, 'day');
 
-              <Card style={{ minWidth: 200 }}>
-                <Typography.Text type="secondary">Pessoas envolvidas</Typography.Text>
-                <Typography.Title level={3} style={{ margin: 0 }}>
-                  {report.summary.peopleInvolved}
-                </Typography.Title>
-              </Card>
+                    if (value === 'LAST_7') {
+                      return daysDiff <= 7;
+                    }
+                    if (value === 'LAST_30') {
+                      return daysDiff <= 30;
+                    }
+                    return daysDiff > 30;
+                  },
+                  render: (value: string) => dayjs(value).format('DD/MM/YYYY HH:mm')
+                }
+              ]}
+            />
+          </Card>
+        ) : null}
+      </Flex>
 
-              <Card style={{ minWidth: 260 }}>
-                <Typography.Text type="secondary">Período</Typography.Text>
-                <Typography.Title level={5} style={{ margin: 0 }}>
-                  {new Date(report.period.start).toLocaleDateString()} -{' '}
-                  {new Date(report.period.end).toLocaleDateString()}
-                </Typography.Title>
-              </Card>
-            </Flex>
+      <Modal
+        title={jiraIssueDetail ? `Detalhes Jira: ${jiraIssueDetail.issue.key}` : 'Detalhes da tarefa Jira'}
+        open={jiraIssueModalOpen}
+        onCancel={closeJiraIssueModal}
+        footer={null}
+        width={isMobile ? 'calc(100vw - 24px)' : 980}
+        centered={!isMobile}
+        style={isMobile ? { top: 12 } : undefined}
+      >
+        {jiraIssueLoading ? (
+          <Card loading />
+        ) : jiraIssueDetail ? (
+          <Flex vertical gap={16}>
+            <Card size="small">
+              <Flex vertical gap={6}>
+                <Typography.Text strong>{jiraIssueDetail.issue.summary}</Typography.Text>
+                <Typography.Text type="secondary">
+                  Criada em {dayjs(jiraIssueDetail.issue.createdAt).format('DD/MM/YYYY HH:mm')} • Status atual:{' '}
+                  {jiraIssueDetail.issue.currentStatus} • Responsável atual: {jiraIssueDetail.issue.currentAssignee}
+                </Typography.Text>
+                <Typography.Text type="secondary">
+                  Horário útil: {jiraIssueDetail.businessHoursConfig.windows.join(' e ')} • Segunda a sexta
+                </Typography.Text>
+                <Typography.Text>
+                  Total em horas úteis:{' '}
+                  <Typography.Text strong>{formatBusinessHours(jiraIssueDetail.summary.totalBusinessHours)}</Typography.Text>
+                </Typography.Text>
+                <Typography.Text>
+                  Teste em horas úteis:{' '}
+                  <Typography.Text strong>
+                    {formatBusinessHours(jiraIssueDetail.summary.totalTestBusinessHours)}
+                  </Typography.Text>
+                </Typography.Text>
+                <Typography.Text>
+                  Double check em horas úteis:{' '}
+                  <Typography.Text strong>
+                    {formatBusinessHours(jiraIssueDetail.summary.totalDoubleCheckBusinessHours)}
+                  </Typography.Text>
+                </Typography.Text>
+                <Typography.Link href={jiraIssueDetail.issue.issueUrl} target="_blank">
+                  Abrir issue no Jira
+                </Typography.Link>
+              </Flex>
+            </Card>
 
-            <Card title="Totais por etapa (horas)">
-              <Table
+            <Card size="small" title="Tempo por etapa do Kanban">
+              <Table<{ status: string; businessHours: number }>
                 rowKey="status"
-                dataSource={report.statusTotals}
+                dataSource={jiraIssueDetail.statusTimes}
+                size="small"
                 pagination={false}
+                locale={{ emptyText: 'Sem tempo útil calculado para esta issue.' }}
                 columns={[
                   {
                     title: 'Etapa',
-                    dataIndex: 'status',
-                    render: (status: string) => <Tag>{status}</Tag>
+                    dataIndex: 'status'
                   },
                   {
-                    title: 'Horas totais no período',
-                    dataIndex: 'totalHours'
-                  },
-                  {
-                    title: 'Média de horas por atividade',
-                    dataIndex: 'avgHoursPerIssue'
+                    title: 'Horas úteis',
+                    dataIndex: 'businessHours',
+                    sorter: (a, b) => a.businessHours - b.businessHours,
+                    defaultSortOrder: 'descend',
+                    render: (value: number) => formatBusinessHours(value)
                   }
                 ]}
               />
             </Card>
 
-            <Card title="Detalhamento por atividade">
-              <Table
-                rowKey="key"
-                dataSource={report.issues}
-                pagination={{ pageSize: 10 }}
+            <Card size="small" title="Tempo em code por dev">
+              <Table<{
+                assignee: string;
+                businessHours: number;
+                statusTimes: Array<{ status: string; businessHours: number }>;
+              }>
+                rowKey="assignee"
+                dataSource={jiraIssueDetail.codeTimesByAssignee}
+                size="small"
+                pagination={false}
+                locale={{ emptyText: 'Sem tempo em etapas de code para esta issue.' }}
                 columns={[
                   {
-                    title: 'Atividade',
-                    dataIndex: 'key',
-                    render: (key: string, record: JiraReportResponse['issues'][number]) => (
-                      <Space direction="vertical" size={0}>
-                        <Typography.Text strong>{key}</Typography.Text>
-                        <Typography.Text type="secondary">{record.summary}</Typography.Text>
-                      </Space>
-                    )
+                    title: 'Dev',
+                    dataIndex: 'assignee'
                   },
                   {
-                    title: 'Etapa atual',
-                    dataIndex: 'currentStatus',
-                    render: (value: string) => <Tag color="blue">{value}</Tag>
+                    title: 'Horas úteis em code',
+                    dataIndex: 'businessHours',
+                    sorter: (a, b) => a.businessHours - b.businessHours,
+                    defaultSortOrder: 'descend',
+                    render: (value: number) => formatBusinessHours(value)
                   },
                   {
-                    title: 'Horas no período',
-                    dataIndex: 'totalHoursInPeriod'
-                  },
-                  {
-                    title: 'Pessoas envolvidas',
-                    dataIndex: 'involvedPeople',
-                    filters: peopleFilterOptions,
-                    filterSearch: true,
-                    onFilter: (value, record: JiraReportResponse['issues'][number]) =>
-                      record.involvedPeople.some((person) => person.name === value),
-                    render: (
-                      involvedPeople: JiraReportResponse['issues'][number]['involvedPeople']
-                    ) =>
-                      involvedPeople.length > 0 ? (
-                        <Space wrap>
-                          {involvedPeople.map((person) => (
-                            <Tag key={person.id}>{person.name}</Tag>
-                          ))}
-                        </Space>
-                      ) : (
-                        <Typography.Text type="secondary">Sem identificação</Typography.Text>
-                      )
-                  },
-                  {
-                    title: 'Tempo por etapa',
+                    title: 'Detalhe por etapa',
                     dataIndex: 'statusTimes',
-                    render: (statusTimes: JiraReportResponse['issues'][number]['statusTimes']) => (
-                      <Space wrap>
-                        {statusTimes.map((item) => (
-                          <Tag key={`${item.status}-${item.hours}`}>{`${item.status}: ${item.hours}h`}</Tag>
-                        ))}
-                      </Space>
-                    )
+                    render: (statusTimes: Array<{ status: string; businessHours: number }>) =>
+                      statusTimes.map((item) => `${item.status}: ${formatBusinessHours(item.businessHours)}`).join(' • ')
                   }
                 ]}
               />
             </Card>
-          </>
-        ) : null}
-      </Flex>
+
+            <Card size="small" title="Tempo em teste por responsável">
+              <Table<{
+                assignee: string;
+                businessHours: number;
+                statusTimes: Array<{ status: string; businessHours: number }>;
+              }>
+                rowKey="assignee"
+                dataSource={jiraIssueDetail.testTimesByAssignee}
+                size="small"
+                pagination={false}
+                locale={{ emptyText: 'Sem tempo em etapas de teste para esta issue.' }}
+                columns={[
+                  {
+                    title: 'Responsável',
+                    dataIndex: 'assignee'
+                  },
+                  {
+                    title: 'Horas úteis em teste',
+                    dataIndex: 'businessHours',
+                    sorter: (a, b) => a.businessHours - b.businessHours,
+                    defaultSortOrder: 'descend',
+                    render: (value: number) => formatBusinessHours(value)
+                  },
+                  {
+                    title: 'Detalhe por etapa',
+                    dataIndex: 'statusTimes',
+                    render: (statusTimes: Array<{ status: string; businessHours: number }>) =>
+                      statusTimes.map((item) => `${item.status}: ${formatBusinessHours(item.businessHours)}`).join(' • ')
+                  }
+                ]}
+              />
+            </Card>
+
+            <Card size="small" title="Tempo em double check por responsável">
+              <Table<{
+                assignee: string;
+                businessHours: number;
+                statusTimes: Array<{ status: string; businessHours: number }>;
+              }>
+                rowKey="assignee"
+                dataSource={jiraIssueDetail.doubleCheckTimesByAssignee}
+                size="small"
+                pagination={false}
+                locale={{ emptyText: 'Sem tempo em etapas de double check para esta issue.' }}
+                columns={[
+                  {
+                    title: 'Responsável',
+                    dataIndex: 'assignee'
+                  },
+                  {
+                    title: 'Horas úteis em double check',
+                    dataIndex: 'businessHours',
+                    sorter: (a, b) => a.businessHours - b.businessHours,
+                    defaultSortOrder: 'descend',
+                    render: (value: number) => formatBusinessHours(value)
+                  },
+                  {
+                    title: 'Detalhe por etapa',
+                    dataIndex: 'statusTimes',
+                    render: (statusTimes: Array<{ status: string; businessHours: number }>) =>
+                      statusTimes.map((item) => `${item.status}: ${formatBusinessHours(item.businessHours)}`).join(' • ')
+                  }
+                ]}
+              />
+            </Card>
+
+            <Card size="small" title="Histórico de ações (quem fez)">
+              <Table<{
+                actionId: string;
+                at: string;
+                actionType: 'STATUS_CHANGE' | 'ASSIGNEE_CHANGE';
+                actor: string;
+                from: string | null;
+                to: string | null;
+                businessHoursSincePreviousAction: number | null;
+              }>
+                rowKey="actionId"
+                dataSource={jiraIssueDetail.actionLog}
+                size="small"
+                pagination={false}
+                locale={{ emptyText: 'Sem ações registradas no histórico desta issue.' }}
+                columns={[
+                  {
+                    title: 'Data',
+                    dataIndex: 'at',
+                    defaultSortOrder: 'ascend',
+                    sorter: (a, b) => dayjs(a.at).valueOf() - dayjs(b.at).valueOf(),
+                    render: (value: string) => dayjs(value).format('DD/MM/YYYY HH:mm')
+                  },
+                  {
+                    title: 'Ação',
+                    dataIndex: 'actionType',
+                    render: (value: 'STATUS_CHANGE' | 'ASSIGNEE_CHANGE') =>
+                      value === 'STATUS_CHANGE' ? 'Mudança de status' : 'Mudança de responsável'
+                  },
+                  {
+                    title: 'De',
+                    dataIndex: 'from',
+                    render: (value: string | null) => value || '-'
+                  },
+                  {
+                    title: 'Para',
+                    dataIndex: 'to',
+                    render: (value: string | null) => value || '-'
+                  },
+                  {
+                    title: 'Feito por',
+                    dataIndex: 'actor'
+                  },
+                  {
+                    title: 'Horas úteis desde a ação anterior',
+                    dataIndex: 'businessHoursSincePreviousAction',
+                    render: (value: number | null) => (value === null ? '-' : formatBusinessHours(value))
+                  }
+                ]}
+              />
+            </Card>
+          </Flex>
+        ) : (
+          <Empty
+            description={jiraIssueDetailKey ? `Sem detalhes para ${jiraIssueDetailKey}` : 'Selecione uma tarefa'}
+          />
+        )}
+      </Modal>
     </AppShell>
   );
 }

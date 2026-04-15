@@ -21,6 +21,11 @@ const goalParamsSchema = z.object({
   goalId: z.string().min(1)
 });
 
+const sessionParamsSchema = z.object({
+  id: z.string().min(1),
+  sessionId: z.string().min(1)
+});
+
 const issueDetailsParamsSchema = z.object({
   id: z.string().min(1),
   issueKey: z.string().trim().min(3)
@@ -50,6 +55,19 @@ const createSessionSchema = z.object({
   blockers: z.string().trim().max(2000).optional(),
   nextSteps: z.string().trim().max(2000).optional()
 });
+
+const updateSessionSchema = z
+  .object({
+    meetingDate: z.string().datetime().optional(),
+    performanceScore: z.number().int().min(1).max(10).optional(),
+    summary: z.string().trim().min(5).max(2000).optional(),
+    highlights: z.string().trim().max(2000).optional(),
+    blockers: z.string().trim().max(2000).optional(),
+    nextSteps: z.string().trim().max(2000).optional()
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: 'Informe ao menos um campo para atualização'
+  });
 
 type JiraConfig = {
   baseUrl: string;
@@ -112,6 +130,7 @@ type JiraIssue = {
     issuetype?: {
       name?: string;
     };
+    [fieldKey: string]: unknown;
   };
 };
 
@@ -155,6 +174,10 @@ type JiraLegacySearchResponse = {
 type JiraChangelogResponse = {
   values: Array<{
     created: string;
+    author?: {
+      accountId?: string;
+      displayName?: string;
+    } | null;
     items: Array<{
       field: string;
       from?: string;
@@ -164,6 +187,16 @@ type JiraChangelogResponse = {
     }>;
   }>;
   isLast: boolean;
+};
+
+type JiraFieldMetadata = {
+  id: string;
+  name?: string;
+  clauseNames?: string[];
+  schema?: {
+    custom?: string;
+    type?: string;
+  };
 };
 
 type GithubSearchIssuesResponse = {
@@ -180,6 +213,8 @@ type GithubSearchIssuesResponse = {
     repository_url: string;
   }>;
 };
+
+const storyPointsFieldCache = new Map<string, string | null>();
 
 function splitCommaSeparated(value: string | undefined) {
   if (!value) {
@@ -299,11 +334,111 @@ async function githubRequest<T>(config: GithubConfig, path: string) {
   return (await response.json()) as T;
 }
 
-async function fetchJiraActivitiesForUser(config: JiraConfig, jql: string, maxIssues: number) {
+function normalizeJiraFieldLabel(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function toFiniteNumber(value: unknown) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.replace(',', '.').trim();
+
+    if (!normalized) {
+      return null;
+    }
+
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+async function resolveStoryPointsFieldId(config: JiraConfig) {
+  const configuredField = process.env.JIRA_STORY_POINTS_FIELD?.trim();
+
+  if (configuredField) {
+    return configuredField;
+  }
+
+  if (storyPointsFieldCache.has(config.baseUrl)) {
+    return storyPointsFieldCache.get(config.baseUrl) ?? null;
+  }
+
+  try {
+    const fields = await jiraRequest<JiraFieldMetadata[]>(config, '/field');
+    const exactMatches = new Set([
+      'story points',
+      'story point estimate',
+      'story point estimation',
+      'pontos da historia',
+      'pontos de historia'
+    ]);
+
+    const matchedField =
+      fields.find((field) => {
+        const labels = [field.name ?? '', ...(field.clauseNames ?? [])]
+          .map(normalizeJiraFieldLabel)
+          .filter(Boolean);
+
+        return labels.some((label) => exactMatches.has(label));
+      }) ??
+      fields.find((field) => {
+        const labels = [field.name ?? '', ...(field.clauseNames ?? [])]
+          .map(normalizeJiraFieldLabel)
+          .filter(Boolean);
+
+        return labels.some(
+          (label) =>
+            (label.includes('story') && label.includes('point')) ||
+            (label.includes('ponto') && label.includes('historia'))
+        );
+      }) ??
+      fields.find((field) => {
+        const custom = normalizeJiraFieldLabel(field.schema?.custom ?? '');
+        return custom.includes('story') && custom.includes('point');
+      }) ??
+      null;
+
+    const fieldId = matchedField?.id?.trim() || null;
+    storyPointsFieldCache.set(config.baseUrl, fieldId);
+    return fieldId;
+  } catch {
+    storyPointsFieldCache.set(config.baseUrl, null);
+    return null;
+  }
+}
+
+function extractStoryPointsFromIssue(issue: JiraIssue, storyPointsFieldId: string | null) {
+  if (!storyPointsFieldId) {
+    return null;
+  }
+
+  return toFiniteNumber(issue.fields[storyPointsFieldId]);
+}
+
+async function fetchJiraActivitiesForUser(
+  config: JiraConfig,
+  jql: string,
+  maxIssues: number,
+  storyPointsFieldId: string | null
+) {
   const pageSize = 50;
   const issues: JiraIssue[] = [];
   let nextPageToken: string | undefined;
   let useLegacySearch = false;
+  const requestedFields = ['summary', 'status', 'created', 'updated', 'issuetype'];
+
+  if (storyPointsFieldId) {
+    requestedFields.push(storyPointsFieldId);
+  }
 
   while (issues.length < maxIssues) {
     if (useLegacySearch) {
@@ -313,7 +448,7 @@ async function fetchJiraActivitiesForUser(config: JiraConfig, jql: string, maxIs
           jql,
           startAt: issues.length,
           maxResults: Math.min(pageSize, maxIssues - issues.length),
-          fields: ['summary', 'status', 'created', 'updated', 'issuetype']
+          fields: requestedFields
         })
       });
 
@@ -335,7 +470,7 @@ async function fetchJiraActivitiesForUser(config: JiraConfig, jql: string, maxIs
     const requestBody: JiraEnhancedSearchRequest = {
       jql,
       maxResults: Math.min(pageSize, maxIssues - issues.length),
-      fields: ['summary', 'status', 'created', 'updated', 'issuetype'],
+      fields: requestedFields,
       fieldsByKeys: false,
       failFast: false
     };
@@ -387,6 +522,7 @@ async function fetchJiraActivitiesForUser(config: JiraConfig, jql: string, maxIs
     summary: issue.fields.summary,
     status: issue.fields.status.name,
     issueType: issue.fields.issuetype?.name ?? 'Issue',
+    storyPoints: extractStoryPointsFromIssue(issue, storyPointsFieldId),
     createdAt: issue.fields.created,
     updatedAt: issue.fields.updated,
     isDone: issue.fields.status.statusCategory?.key === 'done'
@@ -470,8 +606,12 @@ function normalizeText(value: string) {
     .toLowerCase();
 }
 
+function normalizeStatusForMatching(status: string) {
+  return normalizeText(status).replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
 function isCodeStatus(status: string) {
-  const normalized = normalizeText(status);
+  const normalized = normalizeStatusForMatching(status);
   const excludes = ['review', 'revisao', 'qa', 'teste', 'test'];
 
   if (excludes.some((token) => normalized.includes(token))) {
@@ -486,6 +626,35 @@ function isCodeStatus(status: string) {
     normalized.includes('develop') ||
     normalized.includes('desenvolv') ||
     normalized === 'dev'
+  );
+}
+
+function isDoubleCheckStatus(status: string) {
+  const normalized = normalizeStatusForMatching(status);
+
+  return (
+    normalized.includes('double check') ||
+    normalized.includes('duble check') ||
+    normalized.includes('duplo check') ||
+    normalized.includes('second check') ||
+    normalized.includes('2nd check')
+  );
+}
+
+function isTestStatus(status: string) {
+  if (isDoubleCheckStatus(status)) {
+    return false;
+  }
+
+  const normalized = normalizeStatusForMatching(status);
+
+  return (
+    normalized.includes('qa') ||
+    normalized.includes('test') ||
+    normalized.includes('teste') ||
+    normalized.includes('homolog') ||
+    normalized.includes('validacao') ||
+    normalized.includes('validation')
   );
 }
 
@@ -663,12 +832,14 @@ export async function peopleProgressRoutes(app: FastifyInstance) {
       summary: string;
       status: string;
       issueType: string;
+      storyPoints: number | null;
       createdAt: string;
       updatedAt: string;
       isDone: boolean;
     }> = [];
     let jiraWarning: string | null = null;
     let jiraAppliedJql: string | null = null;
+    let jiraStoryPointsField: string | null = null;
     let githubWarning: string | null = null;
     let openPullRequests: Array<{
       id: number;
@@ -692,7 +863,13 @@ export async function peopleProgressRoutes(app: FastifyInstance) {
             sprintNames,
             periodStart
           });
-          jiraActivities = await fetchJiraActivitiesForUser(jiraConfig, jiraAppliedJql, maxIssues);
+          jiraStoryPointsField = await resolveStoryPointsFieldId(jiraConfig);
+          jiraActivities = await fetchJiraActivitiesForUser(
+            jiraConfig,
+            jiraAppliedJql,
+            maxIssues,
+            jiraStoryPointsField
+          );
         } catch (error) {
           jiraWarning = error instanceof Error ? error.message : 'Erro ao buscar atividades no Jira';
         }
@@ -744,6 +921,18 @@ export async function peopleProgressRoutes(app: FastifyInstance) {
 
     const jiraDoneCount = jiraActivities.filter((item) => item.isDone).length;
     const jiraInProgressCount = jiraActivities.length - jiraDoneCount;
+    const jiraActivitiesWithPoints = jiraActivities.filter((item) => item.storyPoints !== null);
+    const jiraStoryPointsTotal = Number(
+      jiraActivitiesWithPoints.reduce((sum, item) => sum + (item.storyPoints ?? 0), 0).toFixed(2)
+    );
+    const jiraStoryPointsDone = Number(
+      jiraActivitiesWithPoints
+        .filter((item) => item.isDone)
+        .reduce((sum, item) => sum + (item.storyPoints ?? 0), 0)
+        .toFixed(2)
+    );
+    const jiraStoryPointsInProgress = Number((jiraStoryPointsTotal - jiraStoryPointsDone).toFixed(2));
+    const jiraUnestimatedCount = jiraActivities.length - jiraActivitiesWithPoints.length;
 
     return reply.send({
       person,
@@ -759,6 +948,10 @@ export async function peopleProgressRoutes(app: FastifyInstance) {
         jiraActivitiesTotal: jiraActivities.length,
         jiraDoneCount,
         jiraInProgressCount,
+        jiraStoryPointsTotal,
+        jiraStoryPointsDone,
+        jiraStoryPointsInProgress,
+        jiraUnestimatedCount,
         githubOpenPrCount: openPullRequests.length
       },
       goals,
@@ -771,7 +964,8 @@ export async function peopleProgressRoutes(app: FastifyInstance) {
         days,
         sprintNames,
         maxIssues,
-        jql: jiraAppliedJql
+        jql: jiraAppliedJql,
+        storyPointsField: jiraStoryPointsField
       },
       githubFilters: {
         organization: githubOrg,
@@ -867,6 +1061,7 @@ export async function peopleProgressRoutes(app: FastifyInstance) {
       const historiesSorted = changelog
         .map((history) => ({
           at: new Date(history.created),
+          author: history.author,
           items: history.items
         }))
         .sort((a, b) => a.at.getTime() - b.at.getTime());
@@ -926,6 +1121,59 @@ export async function peopleProgressRoutes(app: FastifyInstance) {
           statusMinutes: Map<string, number>;
         }
       >();
+      const testByAssigneeMinutes = new Map<
+        string,
+        {
+          assignee: string;
+          totalMinutes: number;
+          statusMinutes: Map<string, number>;
+        }
+      >();
+      const doubleCheckByAssigneeMinutes = new Map<
+        string,
+        {
+          assignee: string;
+          totalMinutes: number;
+          statusMinutes: Map<string, number>;
+        }
+      >();
+      const actionLog: Array<{
+        actionId: string;
+        at: string;
+        actionType: 'STATUS_CHANGE' | 'ASSIGNEE_CHANGE';
+        actor: string;
+        from: string | null;
+        to: string | null;
+        businessHoursSincePreviousAction: number | null;
+      }> = [];
+      let previousActionAt: Date | null = null;
+      let actionCounter = 0;
+
+      for (const history of historiesSorted) {
+        const actor = history.author?.displayName?.trim() || 'Não identificado';
+
+        for (const item of history.items) {
+          if (item.field !== 'status' && item.field !== 'assignee') {
+            continue;
+          }
+
+          const businessHoursSincePreviousAction = previousActionAt
+            ? minutesToHours(calculateBusinessMinutesBetween(previousActionAt, history.at))
+            : null;
+
+          actionLog.push({
+            actionId: `${history.at.toISOString()}-${item.field}-${actionCounter}`,
+            at: history.at.toISOString(),
+            actionType: item.field === 'status' ? 'STATUS_CHANGE' : 'ASSIGNEE_CHANGE',
+            actor,
+            from: item.fromString?.trim() || null,
+            to: item.toString?.trim() || null,
+            businessHoursSincePreviousAction
+          });
+          actionCounter += 1;
+          previousActionAt = history.at;
+        }
+      }
 
       for (const segment of segments) {
         const segmentMinutes = calculateBusinessMinutesBetween(segment.start, segment.end);
@@ -934,28 +1182,55 @@ export async function peopleProgressRoutes(app: FastifyInstance) {
           continue;
         }
 
+        const assigneeName = segment.assignee.name || 'Não atribuído';
+
         statusDurationsMinutes.set(
           segment.status,
           (statusDurationsMinutes.get(segment.status) ?? 0) + segmentMinutes
         );
 
-        if (!isCodeStatus(segment.status)) {
-          continue;
+        if (isCodeStatus(segment.status)) {
+          const existing = codeByAssigneeMinutes.get(assigneeName) ?? {
+            assignee: assigneeName,
+            totalMinutes: 0,
+            statusMinutes: new Map<string, number>()
+          };
+
+          existing.totalMinutes += segmentMinutes;
+          existing.statusMinutes.set(
+            segment.status,
+            (existing.statusMinutes.get(segment.status) ?? 0) + segmentMinutes
+          );
+          codeByAssigneeMinutes.set(assigneeName, existing);
         }
 
-        const assigneeName = segment.assignee.name || 'Não atribuído';
-        const existing = codeByAssigneeMinutes.get(assigneeName) ?? {
-          assignee: assigneeName,
-          totalMinutes: 0,
-          statusMinutes: new Map<string, number>()
-        };
+        if (isTestStatus(segment.status)) {
+          const existingTest = testByAssigneeMinutes.get(assigneeName) ?? {
+            assignee: assigneeName,
+            totalMinutes: 0,
+            statusMinutes: new Map<string, number>()
+          };
+          existingTest.totalMinutes += segmentMinutes;
+          existingTest.statusMinutes.set(
+            segment.status,
+            (existingTest.statusMinutes.get(segment.status) ?? 0) + segmentMinutes
+          );
+          testByAssigneeMinutes.set(assigneeName, existingTest);
+        }
 
-        existing.totalMinutes += segmentMinutes;
-        existing.statusMinutes.set(
-          segment.status,
-          (existing.statusMinutes.get(segment.status) ?? 0) + segmentMinutes
-        );
-        codeByAssigneeMinutes.set(assigneeName, existing);
+        if (isDoubleCheckStatus(segment.status)) {
+          const existingDoubleCheck = doubleCheckByAssigneeMinutes.get(assigneeName) ?? {
+            assignee: assigneeName,
+            totalMinutes: 0,
+            statusMinutes: new Map<string, number>()
+          };
+          existingDoubleCheck.totalMinutes += segmentMinutes;
+          existingDoubleCheck.statusMinutes.set(
+            segment.status,
+            (existingDoubleCheck.statusMinutes.get(segment.status) ?? 0) + segmentMinutes
+          );
+          doubleCheckByAssigneeMinutes.set(assigneeName, existingDoubleCheck);
+        }
       }
 
       const statusTimes = Array.from(statusDurationsMinutes.entries())
@@ -978,8 +1253,40 @@ export async function peopleProgressRoutes(app: FastifyInstance) {
         }))
         .sort((a, b) => b.businessHours - a.businessHours);
 
+      const testTimesByAssignee = Array.from(testByAssigneeMinutes.values())
+        .map((entry) => ({
+          assignee: entry.assignee,
+          businessHours: minutesToHours(entry.totalMinutes),
+          statusTimes: Array.from(entry.statusMinutes.entries())
+            .map(([status, totalMinutes]) => ({
+              status,
+              businessHours: minutesToHours(totalMinutes)
+            }))
+            .sort((a, b) => b.businessHours - a.businessHours)
+        }))
+        .sort((a, b) => b.businessHours - a.businessHours);
+
+      const doubleCheckTimesByAssignee = Array.from(doubleCheckByAssigneeMinutes.values())
+        .map((entry) => ({
+          assignee: entry.assignee,
+          businessHours: minutesToHours(entry.totalMinutes),
+          statusTimes: Array.from(entry.statusMinutes.entries())
+            .map(([status, totalMinutes]) => ({
+              status,
+              businessHours: minutesToHours(totalMinutes)
+            }))
+            .sort((a, b) => b.businessHours - a.businessHours)
+        }))
+        .sort((a, b) => b.businessHours - a.businessHours);
+
       const totalBusinessHours = Number(
         statusTimes.reduce((sum, item) => sum + item.businessHours, 0).toFixed(2)
+      );
+      const totalTestBusinessHours = Number(
+        testTimesByAssignee.reduce((sum, item) => sum + item.businessHours, 0).toFixed(2)
+      );
+      const totalDoubleCheckBusinessHours = Number(
+        doubleCheckTimesByAssignee.reduce((sum, item) => sum + item.businessHours, 0).toFixed(2)
       );
 
       return reply.send({
@@ -1002,10 +1309,15 @@ export async function peopleProgressRoutes(app: FastifyInstance) {
           windows: ['08:30-12:00', '13:30-18:00']
         },
         summary: {
-          totalBusinessHours
+          totalBusinessHours,
+          totalTestBusinessHours,
+          totalDoubleCheckBusinessHours
         },
         statusTimes,
-        codeTimesByAssignee
+        codeTimesByAssignee,
+        testTimesByAssignee,
+        doubleCheckTimesByAssignee,
+        actionLog
       });
     } catch (error) {
       request.log.error(error);
@@ -1109,6 +1421,36 @@ export async function peopleProgressRoutes(app: FastifyInstance) {
     return reply.send({ goal });
   });
 
+  app.delete('/:id/progress/goals/:goalId', async (request, reply) => {
+    const payload = requireAuth(request, reply);
+
+    if (!payload) {
+      return;
+    }
+
+    const parsedParams = goalParamsSchema.safeParse(request.params);
+
+    if (!parsedParams.success) {
+      return reply.status(400).send({ message: 'Meta inválida' });
+    }
+
+    const { id, goalId } = parsedParams.data;
+    const goalExists = await prisma.developmentGoal.findUnique({
+      where: { id: goalId },
+      select: { id: true, userId: true }
+    });
+
+    if (!goalExists || goalExists.userId !== id) {
+      return reply.status(404).send({ message: 'Meta não encontrada para esta pessoa' });
+    }
+
+    await prisma.developmentGoal.delete({
+      where: { id: goalId }
+    });
+
+    return reply.status(204).send();
+  });
+
   app.post('/:id/progress/sessions', async (request, reply) => {
     const payload = requireAuth(request, reply);
 
@@ -1153,5 +1495,80 @@ export async function peopleProgressRoutes(app: FastifyInstance) {
     });
 
     return reply.status(201).send({ oneOnOne });
+  });
+
+  app.patch('/:id/progress/sessions/:sessionId', async (request, reply) => {
+    const payload = requireAuth(request, reply);
+
+    if (!payload) {
+      return;
+    }
+
+    const parsedParams = sessionParamsSchema.safeParse(request.params);
+
+    if (!parsedParams.success) {
+      return reply.status(400).send({ message: 'Sessão inválida' });
+    }
+
+    const parsedBody = updateSessionSchema.safeParse(request.body);
+
+    if (!parsedBody.success) {
+      return reply.status(400).send({ message: 'Dados inválidos para atualizar sessão 1:1' });
+    }
+
+    const { id, sessionId } = parsedParams.data;
+    const sessionExists = await prisma.oneOnOneSession.findUnique({
+      where: { id: sessionId },
+      select: { id: true, userId: true }
+    });
+
+    if (!sessionExists || sessionExists.userId !== id) {
+      return reply.status(404).send({ message: 'Sessão 1:1 não encontrada para esta pessoa' });
+    }
+
+    const data = parsedBody.data;
+    const oneOnOne = await prisma.oneOnOneSession.update({
+      where: { id: sessionId },
+      data: {
+        meetingDate: data.meetingDate !== undefined ? new Date(data.meetingDate) : undefined,
+        performanceScore: data.performanceScore,
+        summary: data.summary?.trim(),
+        highlights: data.highlights !== undefined ? data.highlights.trim() || null : undefined,
+        blockers: data.blockers !== undefined ? data.blockers.trim() || null : undefined,
+        nextSteps: data.nextSteps !== undefined ? data.nextSteps.trim() || null : undefined
+      }
+    });
+
+    return reply.send({ oneOnOne });
+  });
+
+  app.delete('/:id/progress/sessions/:sessionId', async (request, reply) => {
+    const payload = requireAuth(request, reply);
+
+    if (!payload) {
+      return;
+    }
+
+    const parsedParams = sessionParamsSchema.safeParse(request.params);
+
+    if (!parsedParams.success) {
+      return reply.status(400).send({ message: 'Sessão inválida' });
+    }
+
+    const { id, sessionId } = parsedParams.data;
+    const sessionExists = await prisma.oneOnOneSession.findUnique({
+      where: { id: sessionId },
+      select: { id: true, userId: true }
+    });
+
+    if (!sessionExists || sessionExists.userId !== id) {
+      return reply.status(404).send({ message: 'Sessão 1:1 não encontrada para esta pessoa' });
+    }
+
+    await prisma.oneOnOneSession.delete({
+      where: { id: sessionId }
+    });
+
+    return reply.status(204).send();
   });
 }

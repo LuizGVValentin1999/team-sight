@@ -6,6 +6,12 @@ import { requireAuth } from '../lib/auth.js';
 
 const userRoleValues = ['DEV', 'QA', 'BA', 'PO', 'UX', 'TECH_LEAD', 'QA_LEAD', 'MANAGER'] as const;
 const seniorityValues = ['INTERN', 'JUNIOR', 'MID', 'SENIOR', 'STAFF'] as const;
+const rolesWithoutSeniority = new Set<(typeof userRoleValues)[number]>([
+  'PO',
+  'BA',
+  'TECH_LEAD',
+  'QA_LEAD'
+]);
 const integrationLinkSchema = z.string().trim().max(512);
 const maxAvatarDataUrlLength = 900_000;
 const avatarUrlSchema = z
@@ -97,6 +103,17 @@ function getGithubConfig(): GithubConfig | null {
 function normalizeOptionalText(value: string | undefined) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+function normalizeSeniorityForRole(
+  role: (typeof userRoleValues)[number],
+  seniority: (typeof seniorityValues)[number]
+) {
+  if (rolesWithoutSeniority.has(role)) {
+    return 'STAFF' as const;
+  }
+
+  return seniority;
 }
 
 function extractGithubOrg(raw: string) {
@@ -785,6 +802,7 @@ export async function peopleRoutes(app: FastifyInstance) {
 
     const { name, email, role, seniority, jiraUserKey, gitUsername, avatarUrl, hiredAt, active } =
       parsedBody.data;
+    const normalizedSeniority = normalizeSeniorityForRole(role, seniority);
 
     const existingUser = await prisma.user.findUnique({ where: { email } });
 
@@ -841,7 +859,7 @@ export async function peopleRoutes(app: FastifyInstance) {
         name,
         email,
         role,
-        seniority,
+        seniority: normalizedSeniority,
         jiraUserKey: normalizedJiraAccountId,
         gitUsername: normalizedGitUsername,
         avatarUrl: resolvedAvatarUrl,
@@ -889,6 +907,7 @@ export async function peopleRoutes(app: FastifyInstance) {
     const { id } = parsedParams.data;
     const { name, email, role, seniority, jiraUserKey, gitUsername, avatarUrl, active } =
       parsedBody.data;
+    const normalizedSeniority = normalizeSeniorityForRole(role, seniority);
 
     const existingPerson = await prisma.user.findUnique({
       where: { id },
@@ -955,7 +974,7 @@ export async function peopleRoutes(app: FastifyInstance) {
         name,
         email,
         role,
-        seniority,
+        seniority: normalizedSeniority,
         jiraUserKey: normalizedJiraAccountId,
         gitUsername: normalizedGitUsername,
         avatarUrl: resolvedAvatarUrl,
