@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../lib/auth.js';
+import { prisma } from '../lib/prisma.js';
 
 type JiraIssue = {
   key: string;
@@ -117,6 +118,7 @@ const querySchema = z
   .object({
     projectKey: z.string().trim().min(1).optional(),
     jql: z.string().trim().min(1).optional(),
+    person: z.string().trim().min(1).optional(),
     sprintNames: z.string().trim().optional(),
     issueKey: z.string().trim().optional(),
     days: z.coerce.number().int().min(1).max(365).default(30),
@@ -128,6 +130,61 @@ const querySchema = z
 
 const issueDetailsParamsSchema = z.object({
   issueKey: z.string().trim().min(3)
+});
+
+const snapshotParamsSchema = z.object({
+  id: z.string().trim().min(1)
+});
+
+const snapshotBodySchema = z.object({
+  name: z.string().trim().min(2).max(140).optional(),
+  formFilters: z.object({
+    projectKey: z.string().trim().optional(),
+    issueKey: z.string().trim().optional(),
+    person: z.string().trim().optional(),
+    sprintNames: z.string().trim().optional(),
+    jql: z.string().trim().optional(),
+    days: z.number().int().min(1).max(365),
+    maxIssues: z.number().int().min(1).max(300)
+  }),
+  report: z.object({
+    period: z.object({
+      start: z.string(),
+      end: z.string(),
+      days: z.number().int()
+    }),
+    filters: z.object({
+      projectKey: z.string().nullable(),
+      person: z.string().nullable(),
+      issueKey: z.string().nullable(),
+      sprintNames: z.array(z.string()),
+      jql: z.string(),
+      maxIssues: z.number().int(),
+      storyPointsField: z.string().nullable().optional()
+    }),
+    summary: z.object({
+      activitiesTotal: z.number().int(),
+      doneCount: z.number().int(),
+      inProgressCount: z.number().int(),
+      storyPointsTotal: z.number(),
+      storyPointsDone: z.number(),
+      storyPointsInProgress: z.number(),
+      unestimatedCount: z.number().int()
+    }),
+    activities: z.array(
+      z.object({
+        key: z.string(),
+        issueUrl: z.string(),
+        summary: z.string(),
+        status: z.string(),
+        issueType: z.string(),
+        storyPoints: z.number().nullable(),
+        createdAt: z.string(),
+        updatedAt: z.string(),
+        isDone: z.boolean()
+      })
+    )
+  })
 });
 
 function getJiraConfig() {
@@ -327,6 +384,11 @@ function buildIssueScopeJql(issueKey: string) {
   return `(issuekey = ${quoted} OR parent = ${quoted} OR issue in linkedIssues(${quoted}))`;
 }
 
+function buildPersonFilterJql(person: string) {
+  const quoted = quoteJqlValue(person);
+  return `(assignee = ${quoted} OR assignee WAS ${quoted})`;
+}
+
 function buildSprintFilterJql(sprintNames: string[]) {
   if (sprintNames.length === 0) {
     return null;
@@ -343,12 +405,13 @@ function stripOrderBy(jql: string) {
 function buildEffectiveJql(input: {
   projectKey?: string;
   jql?: string;
+  person?: string;
   issueKey?: string | null;
   sprintNames: string[];
   periodStart: Date;
 }) {
   const clauses: string[] = [];
-  const { projectKey, jql, issueKey, sprintNames, periodStart } = input;
+  const { projectKey, jql, person, issueKey, sprintNames, periodStart } = input;
 
   if (jql) {
     clauses.push(`(${stripOrderBy(jql)})`);
@@ -366,6 +429,10 @@ function buildEffectiveJql(input: {
 
   if (issueKey && jql) {
     clauses.push(buildIssueScopeJql(issueKey));
+  }
+
+  if (person) {
+    clauses.push(buildPersonFilterJql(person));
   }
 
   const sprintClause = buildSprintFilterJql(sprintNames);
@@ -871,6 +938,15 @@ function mapInvolvedPeople(issue: JiraIssue, transitions: StatusTransition[]) {
   return people;
 }
 
+function parseDateOrNull(raw: string | null | undefined) {
+  if (!raw) {
+    return null;
+  }
+
+  const parsed = new Date(raw);
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
+}
+
 export async function jiraReportsRoutes(app: FastifyInstance) {
   app.get('/kanban-time', async (request, reply) => {
     const user = requireAuth(request, reply);
@@ -896,11 +972,19 @@ export async function jiraReportsRoutes(app: FastifyInstance) {
       });
     }
 
-    const { days, maxIssues, projectKey, jql, sprintNames: sprintNamesRaw, issueKey: issueKeyRaw } =
-      parsedQuery.data;
+    const {
+      days,
+      maxIssues,
+      projectKey,
+      jql,
+      person: personRaw,
+      sprintNames: sprintNamesRaw,
+      issueKey: issueKeyRaw
+    } = parsedQuery.data;
     const periodEnd = new Date();
     const periodStart = new Date(periodEnd.getTime() - days * 24 * 60 * 60 * 1000);
     const sprintNames = splitCommaSeparated(sprintNamesRaw);
+    const person = personRaw?.trim() || undefined;
     const issueKey = sanitizeIssueKey(issueKeyRaw);
 
     if (issueKeyRaw && !issueKey) {
@@ -912,6 +996,7 @@ export async function jiraReportsRoutes(app: FastifyInstance) {
     const effectiveJql = buildEffectiveJql({
       projectKey,
       jql,
+      person,
       issueKey,
       sprintNames,
       periodStart
@@ -1112,6 +1197,7 @@ export async function jiraReportsRoutes(app: FastifyInstance) {
         },
         filters: {
           projectKey: projectKey ?? null,
+          person: person ?? null,
           issueKey,
           sprintNames,
           jql: effectiveJql,
@@ -1172,11 +1258,19 @@ export async function jiraReportsRoutes(app: FastifyInstance) {
       });
     }
 
-    const { days, maxIssues, projectKey, jql, sprintNames: sprintNamesRaw, issueKey: issueKeyRaw } =
-      parsedQuery.data;
+    const {
+      days,
+      maxIssues,
+      projectKey,
+      jql,
+      person: personRaw,
+      sprintNames: sprintNamesRaw,
+      issueKey: issueKeyRaw
+    } = parsedQuery.data;
     const periodEnd = new Date();
     const periodStart = new Date(periodEnd.getTime() - days * 24 * 60 * 60 * 1000);
     const sprintNames = splitCommaSeparated(sprintNamesRaw);
+    const person = personRaw?.trim() || undefined;
     const issueKey = sanitizeIssueKey(issueKeyRaw);
 
     if (issueKeyRaw && !issueKey) {
@@ -1188,6 +1282,7 @@ export async function jiraReportsRoutes(app: FastifyInstance) {
     const effectiveJql = buildEffectiveJql({
       projectKey,
       jql,
+      person,
       issueKey,
       sprintNames,
       periodStart
@@ -1247,6 +1342,7 @@ export async function jiraReportsRoutes(app: FastifyInstance) {
         },
         filters: {
           projectKey: projectKey ?? null,
+          person: person ?? null,
           issueKey,
           sprintNames,
           jql: effectiveJql,
@@ -1274,6 +1370,169 @@ export async function jiraReportsRoutes(app: FastifyInstance) {
         message: `Falha ao buscar dados do Jira: ${message}`
       });
     }
+  });
+
+  app.post('/snapshots', async (request, reply) => {
+    const user = requireAuth(request, reply);
+
+    if (!user) {
+      return;
+    }
+
+    const parsedBody = snapshotBodySchema.safeParse(request.body);
+
+    if (!parsedBody.success) {
+      return reply.status(400).send({
+        message: 'Dados inválidos para salvar snapshot'
+      });
+    }
+
+    const { report, formFilters } = parsedBody.data;
+    const fallbackName = `Snapshot Jira ${new Date().toLocaleString('pt-BR')}`;
+    const periodStart = parseDateOrNull(report.period.start);
+    const periodEnd = parseDateOrNull(report.period.end);
+
+    const snapshot = await prisma.jiraReportSnapshot.create({
+      data: {
+        name: parsedBody.data.name || fallbackName,
+        createdById: user.sub,
+        projectKey: report.filters.projectKey ?? null,
+        person: report.filters.person ?? null,
+        issueKey: report.filters.issueKey ?? null,
+        sprintNames: report.filters.sprintNames.join(', ') || null,
+        days: formFilters.days,
+        maxIssues: formFilters.maxIssues,
+        jql: report.filters.jql || null,
+        periodStart,
+        periodEnd,
+        activitiesTotal: report.summary.activitiesTotal,
+        doneCount: report.summary.doneCount,
+        inProgressCount: report.summary.inProgressCount,
+        storyPointsTotal: report.summary.storyPointsTotal,
+        storyPointsDone: report.summary.storyPointsDone,
+        data: {
+          report,
+          formFilters
+        }
+      },
+      select: {
+        id: true,
+        name: true,
+        createdAt: true
+      }
+    });
+
+    return reply.status(201).send({
+      snapshot
+    });
+  });
+
+  app.get('/snapshots', async (request, reply) => {
+    const user = requireAuth(request, reply);
+
+    if (!user) {
+      return;
+    }
+
+    const snapshots = await prisma.jiraReportSnapshot.findMany({
+      where: {
+        createdById: user.sub
+      },
+      orderBy: {
+        createdAt: 'desc'
+      },
+      take: 120,
+      select: {
+        id: true,
+        name: true,
+        createdAt: true,
+        projectKey: true,
+        person: true,
+        sprintNames: true,
+        days: true,
+        maxIssues: true,
+        activitiesTotal: true,
+        doneCount: true,
+        inProgressCount: true
+      }
+    });
+
+    return reply.send({
+      snapshots: snapshots.map((snapshot) => ({
+        ...snapshot,
+        sprintNames: splitCommaSeparated(snapshot.sprintNames ?? undefined)
+      }))
+    });
+  });
+
+  app.get('/snapshots/:id', async (request, reply) => {
+    const user = requireAuth(request, reply);
+
+    if (!user) {
+      return;
+    }
+
+    const parsedParams = snapshotParamsSchema.safeParse(request.params);
+
+    if (!parsedParams.success) {
+      return reply.status(400).send({
+        message: 'Snapshot inválido'
+      });
+    }
+
+    const snapshot = await prisma.jiraReportSnapshot.findFirst({
+      where: {
+        id: parsedParams.data.id,
+        createdById: user.sub
+      },
+      select: {
+        id: true,
+        name: true,
+        createdAt: true,
+        data: true
+      }
+    });
+
+    if (!snapshot) {
+      return reply.status(404).send({
+        message: 'Snapshot não encontrado'
+      });
+    }
+
+    return reply.send({
+      snapshot
+    });
+  });
+
+  app.delete('/snapshots/:id', async (request, reply) => {
+    const user = requireAuth(request, reply);
+
+    if (!user) {
+      return;
+    }
+
+    const parsedParams = snapshotParamsSchema.safeParse(request.params);
+
+    if (!parsedParams.success) {
+      return reply.status(400).send({
+        message: 'Snapshot inválido'
+      });
+    }
+
+    const deleted = await prisma.jiraReportSnapshot.deleteMany({
+      where: {
+        id: parsedParams.data.id,
+        createdById: user.sub
+      }
+    });
+
+    if (deleted.count === 0) {
+      return reply.status(404).send({
+        message: 'Snapshot não encontrado'
+      });
+    }
+
+    return reply.status(204).send();
   });
 
   app.get('/issue/:issueKey/details', async (request, reply) => {

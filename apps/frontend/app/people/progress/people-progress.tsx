@@ -1,7 +1,8 @@
 'use client';
 
 import '@ant-design/v5-patch-for-react-19';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import {
   Alert,
@@ -20,7 +21,6 @@ import {
   Progress,
   Select,
   Space,
-  Statistic,
   Table,
   Tag,
   Typography,
@@ -28,8 +28,13 @@ import {
 } from 'antd';
 import dayjs from 'dayjs';
 import { ArrowLeftOutlined, UserOutlined } from '@ant-design/icons';
+import { Area, AreaChart, CartesianGrid, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { AppLoading } from '../../components/app-loading';
 import { AppShell } from '../../components/app-shell';
+
+const MDEditor = dynamic(() => import('@uiw/react-md-editor'), {
+  ssr: false
+});
 
 type PersonSummary = {
   id: string;
@@ -70,6 +75,17 @@ type OneOnOneSession = {
   blockers: string | null;
   nextSteps: string | null;
   createdAt: string;
+};
+
+type ProgressNote = {
+  id: string;
+  title: string;
+  content: string;
+  createdAt: string;
+  author: {
+    id: string;
+    name: string;
+  };
 };
 
 type JiraActivity = {
@@ -184,6 +200,7 @@ type ProgressPayload = {
   };
   goals: DevelopmentGoal[];
   oneOnOnes: OneOnOneSession[];
+  notes: ProgressNote[];
   jiraActivities: JiraActivity[];
   jiraWarning: string | null;
   openPullRequests: OpenPullRequest[];
@@ -216,6 +233,11 @@ type SessionFormValues = {
   highlights?: string;
   blockers?: string;
   nextSteps?: string;
+};
+
+type NoteFormValues = {
+  title: string;
+  content: string;
 };
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3333';
@@ -261,6 +283,17 @@ function roleSupportsSeniority(role: PersonSummary['role']) {
   return !rolesWithoutSeniority.has(role);
 }
 
+const summaryCardBaseStyle: CSSProperties = {
+  borderRadius: 16,
+  border: '1px solid #dbe6f3',
+  boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)'
+};
+
+const summaryProgressCardStyle: CSSProperties = {
+  ...summaryCardBaseStyle,
+  minWidth: 240
+};
+
 function PerformanceTrendTag({ trend }: { trend: 'up' | 'down' | 'stable' }) {
   if (trend === 'up') {
     return <Tag color="green">Evolução positiva</Tag>;
@@ -273,65 +306,79 @@ function PerformanceTrendTag({ trend }: { trend: 'up' | 'down' | 'stable' }) {
   return <Tag>Evolução estável</Tag>;
 }
 
-function PerformanceLineChart({ sessions }: { sessions: OneOnOneSession[] }) {
-  const points = useMemo(() => {
+function PerformanceLineChart({ sessions, isMobile }: { sessions: OneOnOneSession[]; isMobile: boolean }) {
+  const chartData = useMemo(() => {
     const sorted = [...sessions].sort(
       (a, b) => new Date(a.meetingDate).getTime() - new Date(b.meetingDate).getTime()
     );
 
-    if (sorted.length === 0) {
-      return [];
-    }
-
-    if (sorted.length === 1) {
-      return [{ x: 160, y: 80, score: sorted[0].performanceScore, date: sorted[0].meetingDate }];
-    }
-
-    return sorted.map((session, index) => {
-      const ratioX = index / (sorted.length - 1);
-      const x = 24 + ratioX * 292;
-      const ratioY = (session.performanceScore - 1) / 9;
-      const y = 132 - ratioY * 96;
-      return { x, y, score: session.performanceScore, date: session.meetingDate };
-    });
+    return sorted.map((session) => ({
+      id: session.id,
+      score: session.performanceScore,
+      dateLabel: dayjs(session.meetingDate).format('DD/MM'),
+      dateFull: dayjs(session.meetingDate).format('DD/MM/YYYY')
+    }));
   }, [sessions]);
 
-  if (points.length === 0) {
+  if (chartData.length === 0) {
     return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Sem histórico de 1:1" />;
   }
 
-  const polylinePoints = points.map((point) => `${point.x},${point.y}`).join(' ');
-
   return (
-    <div style={{ width: '100%', maxWidth: 1024, margin: '0 auto' }}>
-      <svg
-        viewBox="0 0 340 150"
-        role="img"
-        aria-label="Evolução de desempenho"
-        style={{ display: 'block', width: '100%', height: 'auto' }}
-      >
-        <rect x={0} y={0} width={340} height={150} fill="#f8fafc" rx={10} />
-        <line x1={24} y1={132} x2={316} y2={132} stroke="#d1d5db" strokeWidth={1} />
-        <line x1={24} y1={36} x2={24} y2={132} stroke="#d1d5db" strokeWidth={1} />
-        <polyline fill="none" stroke="#1677ff" strokeWidth={3} strokeLinecap="round" points={polylinePoints} />
-        {points.map((point) => (
-          <g key={`${point.date}-${point.score}`}>
-            <circle cx={point.x} cy={point.y} r={5} fill="#1677ff" />
-          </g>
-        ))}
-        <text x={8} y={40} fill="#6b7280" fontSize={10}>
-          10
-        </text>
-        <text x={10} y={136} fill="#6b7280" fontSize={10}>
-          1
-        </text>
-      </svg>
+    <div style={{ width: '100%', height: isMobile ? 260 : 340 }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={chartData} margin={{ top: 20, right: 16, left: -12, bottom: 0 }}>
+          <defs>
+            <linearGradient id="teamsight-score-fill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#3f87ff" stopOpacity={0.22} />
+              <stop offset="100%" stopColor="#3f87ff" stopOpacity={0.04} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid stroke="#e5edf7" strokeDasharray="3 3" vertical={false} />
+          <XAxis dataKey="dateLabel" tick={{ fill: '#5f6b7a', fontSize: 12 }} minTickGap={24} />
+          <YAxis domain={[1, 10]} ticks={[1, 3, 5, 7, 10]} tick={{ fill: '#5f6b7a', fontSize: 12 }} width={36} />
+          <Tooltip
+            contentStyle={{ borderRadius: 12, borderColor: '#d6e4f4' }}
+            formatter={(value) => [`Nota ${value}`, 'Desempenho']}
+            labelFormatter={(_, payload) =>
+              payload?.[0]?.payload?.dateFull ? `Sessão em ${payload[0].payload.dateFull}` : 'Sessão'
+            }
+          />
+          <Area type="monotone" dataKey="score" stroke="none" fill="url(#teamsight-score-fill)" />
+          <Line
+            type="monotone"
+            dataKey="score"
+            stroke="#1d39c4"
+            strokeWidth={3}
+            dot={{ r: 5, strokeWidth: 2, fill: '#ffffff', stroke: '#1d39c4' }}
+            activeDot={{ r: 7, fill: '#1d39c4' }}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
     </div>
   );
 }
 
 function formatBusinessHours(value: number) {
   return `${value.toFixed(2)} h`;
+}
+
+function markdownPreview(content: string, maxLength = 160) {
+  const plainText = content
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, ' ')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/[*_~>-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (plainText.length <= maxLength) {
+    return plainText;
+  }
+
+  return `${plainText.slice(0, maxLength - 1)}…`;
 }
 
 export function PeopleProgress() {
@@ -341,6 +388,7 @@ export function PeopleProgress() {
 
   const [goalForm] = Form.useForm<GoalFormValues>();
   const [sessionForm] = Form.useForm<SessionFormValues>();
+  const [noteForm] = Form.useForm<NoteFormValues>();
 
   const [mounted, setMounted] = useState(false);
   const [sessionChecking, setSessionChecking] = useState(true);
@@ -358,12 +406,16 @@ export function PeopleProgress() {
   const [loadingProgress, setLoadingProgress] = useState(false);
   const [savingGoal, setSavingGoal] = useState(false);
   const [savingSession, setSavingSession] = useState(false);
+  const [savingNote, setSavingNote] = useState(false);
   const [deletingGoal, setDeletingGoal] = useState(false);
   const [deletingSession, setDeletingSession] = useState(false);
+  const [deletingNote, setDeletingNote] = useState(false);
   const [goalModalOpen, setGoalModalOpen] = useState(false);
   const [sessionModalOpen, setSessionModalOpen] = useState(false);
+  const [noteModalOpen, setNoteModalOpen] = useState(false);
   const [editingGoal, setEditingGoal] = useState<DevelopmentGoal | null>(null);
   const [editingSession, setEditingSession] = useState<OneOnOneSession | null>(null);
+  const [editingNote, setEditingNote] = useState<ProgressNote | null>(null);
   const [progress, setProgress] = useState<ProgressPayload | null>(null);
   const [jiraIssueModalOpen, setJiraIssueModalOpen] = useState(false);
   const [jiraIssueLoading, setJiraIssueLoading] = useState(false);
@@ -377,7 +429,11 @@ export function PeopleProgress() {
   const [pullRequestsPageSize, setPullRequestsPageSize] = useState(8);
   const [sessionsCurrentPage, setSessionsCurrentPage] = useState(1);
   const [sessionsPageSize, setSessionsPageSize] = useState(6);
+  const [notesCurrentPage, setNotesCurrentPage] = useState(1);
+  const [notesPageSize, setNotesPageSize] = useState(6);
   const [messageApi, contextHolder] = message.useMessage();
+  const noteContentValue = Form.useWatch('content', noteForm) ?? '';
+  const noteModalScrollTopRef = useRef<number>(0);
 
   useEffect(() => {
     setMounted(true);
@@ -576,6 +632,7 @@ export function PeopleProgress() {
     setJiraCurrentPage(1);
     setPullRequestsCurrentPage(1);
     setSessionsCurrentPage(1);
+    setNotesCurrentPage(1);
     setJiraIssueModalOpen(false);
     setJiraIssueDetail(null);
     setJiraIssueDetailKey(null);
@@ -641,6 +698,32 @@ export function PeopleProgress() {
     setSessionModalOpen(false);
     setEditingSession(null);
     sessionForm.resetFields();
+  };
+
+  const openCreateNoteModal = () => {
+    noteModalScrollTopRef.current = window.scrollY;
+    setEditingNote(null);
+    noteForm.setFieldsValue({
+      title: '',
+      content: '## Contexto\n\n- \n\n## Plano de ação\n\n- \n'
+    });
+    setNoteModalOpen(true);
+  };
+
+  const openEditNoteModal = (note: ProgressNote) => {
+    noteModalScrollTopRef.current = window.scrollY;
+    setEditingNote(note);
+    noteForm.setFieldsValue({
+      title: note.title,
+      content: note.content
+    });
+    setNoteModalOpen(true);
+  };
+
+  const closeNoteModal = () => {
+    setNoteModalOpen(false);
+    setEditingNote(null);
+    noteForm.resetFields();
   };
 
   const handleSaveGoal = async (values: GoalFormValues) => {
@@ -799,6 +882,79 @@ export function PeopleProgress() {
     }
   };
 
+  const handleSaveNote = async (values: NoteFormValues) => {
+    if (!token || !selectedPersonId) {
+      return;
+    }
+
+    setSavingNote(true);
+
+    try {
+      const endpoint = editingNote
+        ? `${apiUrl}/people/${selectedPersonId}/progress/notes/${editingNote.id}`
+        : `${apiUrl}/people/${selectedPersonId}/progress/notes`;
+      const method = editingNote ? 'PATCH' : 'POST';
+
+      const response = await fetch(endpoint, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          title: values.title,
+          content: values.content
+        })
+      });
+
+      const data = (await response.json()) as { message?: string };
+
+      if (!response.ok) {
+        throw new Error(data.message ?? 'Não foi possível salvar a anotação');
+      }
+
+      messageApi.success(editingNote ? 'Anotação atualizada' : 'Anotação criada');
+      closeNoteModal();
+      await loadProgress(token, selectedPersonId);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Erro ao salvar anotação';
+      messageApi.error(errorMessage);
+    } finally {
+      setSavingNote(false);
+    }
+  };
+
+  const handleDeleteNote = async () => {
+    if (!token || !selectedPersonId || !editingNote) {
+      return;
+    }
+
+    setDeletingNote(true);
+
+    try {
+      const response = await fetch(`${apiUrl}/people/${selectedPersonId}/progress/notes/${editingNote.id}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) {
+        const data = (await response.json()) as { message?: string };
+        throw new Error(data.message ?? 'Não foi possível remover a anotação');
+      }
+
+      messageApi.success('Anotação removida');
+      closeNoteModal();
+      await loadProgress(token, selectedPersonId);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Erro ao remover anotação';
+      messageApi.error(errorMessage);
+    } finally {
+      setDeletingNote(false);
+    }
+  };
+
   const filteredPeople = useMemo(() => {
     const normalizedSearch = peopleSearch.trim().toLowerCase();
 
@@ -874,6 +1030,86 @@ export function PeopleProgress() {
     return Array.from(new Set(progress.openPullRequests.map((pullRequest) => pullRequest.repoFullName)))
       .sort((a, b) => a.localeCompare(b, 'pt-BR'))
       .map((repoFullName) => ({ text: repoFullName, value: repoFullName }));
+  }, [progress]);
+
+  const summaryMetrics = useMemo(() => {
+    if (!progress) {
+      return null;
+    }
+
+    const jiraDonePercent =
+      progress.metrics.jiraActivitiesTotal > 0
+        ? Math.round((progress.metrics.jiraDoneCount / progress.metrics.jiraActivitiesTotal) * 100)
+        : 0;
+    const storyPointsDonePercent =
+      progress.metrics.jiraStoryPointsTotal > 0
+        ? Math.round((progress.metrics.jiraStoryPointsDone / progress.metrics.jiraStoryPointsTotal) * 100)
+        : 0;
+
+    return {
+      jiraDonePercent,
+      storyPointsDonePercent,
+      cards: [
+        {
+          title: 'Nota média 1:1',
+          value:
+            progress.metrics.avgPerformanceScore !== null ? progress.metrics.avgPerformanceScore.toFixed(1) : '-',
+          subtitle: 'Média das sessões registradas',
+          background: 'linear-gradient(145deg, #eef4ff 0%, #ffffff 62%)',
+          color: '#1d39c4'
+        },
+        {
+          title: 'Última nota',
+          value:
+            progress.metrics.lastPerformanceScore !== null ? progress.metrics.lastPerformanceScore.toFixed(1) : '-',
+          subtitle: 'Última sessão de acompanhamento',
+          background: 'linear-gradient(145deg, #f0f9ff 0%, #ffffff 62%)',
+          color: '#0958d9'
+        },
+        {
+          title: 'Sessões 1:1',
+          value: progress.metrics.sessionsCount,
+          subtitle: 'Total registrado no sistema',
+          background: 'linear-gradient(145deg, #f6ffed 0%, #ffffff 62%)',
+          color: '#237804'
+        },
+        {
+          title: 'Metas ativas',
+          value: progress.metrics.goalsOpen,
+          subtitle: `${progress.metrics.goalsDone} concluída(s)`,
+          background: 'linear-gradient(145deg, #fff7e6 0%, #ffffff 62%)',
+          color: '#d46b08'
+        },
+        {
+          title: 'PRs abertos',
+          value: progress.metrics.githubOpenPrCount,
+          subtitle: 'Pendentes de merge',
+          background: 'linear-gradient(145deg, #f9f0ff 0%, #ffffff 62%)',
+          color: '#531dab'
+        },
+        {
+          title: 'Story Points (total)',
+          value: progress.metrics.jiraStoryPointsTotal,
+          subtitle: `${progress.metrics.jiraStoryPointsDone} concluídos`,
+          background: 'linear-gradient(145deg, #fffbe6 0%, #ffffff 62%)',
+          color: '#ad6800'
+        },
+        {
+          title: 'Atividades concluídas',
+          value: progress.metrics.jiraDoneCount,
+          subtitle: `${progress.metrics.jiraActivitiesTotal} no período`,
+          background: 'linear-gradient(145deg, #f6ffed 0%, #ffffff 62%)',
+          color: '#237804'
+        },
+        {
+          title: 'Sem estimativa',
+          value: progress.metrics.jiraUnestimatedCount,
+          subtitle: 'Cards sem Story Points',
+          background: 'linear-gradient(145deg, #fff1f0 0%, #ffffff 62%)',
+          color: '#cf1322'
+        }
+      ]
+    };
   }, [progress]);
 
   const applySourceFilters = () => {
@@ -1132,61 +1368,93 @@ export function PeopleProgress() {
                   </Flex>
                 </Card>
 
-                <Flex gap={12} wrap>
-                  <Card style={{ minWidth: 180 }}>
-                    <Statistic title="Nota média 1:1" value={progress.metrics.avgPerformanceScore ?? '-'} />
-                  </Card>
-                  <Card style={{ minWidth: 180 }}>
-                    <Statistic title="Última nota" value={progress.metrics.lastPerformanceScore ?? '-'} />
-                  </Card>
-                  <Card style={{ minWidth: 180 }}>
-                    <Statistic title="Sessões 1:1" value={progress.metrics.sessionsCount} />
-                  </Card>
-                  <Card style={{ minWidth: 180 }}>
-                    <Statistic title="Metas ativas" value={progress.metrics.goalsOpen} />
-                  </Card>
-                  <Card style={{ minWidth: 180 }}>
-                    <Statistic title="PRs abertos" value={progress.metrics.githubOpenPrCount} />
-                  </Card>
-                  <Card style={{ minWidth: 200 }}>
-                    <Statistic title="Story Points (total)" value={progress.metrics.jiraStoryPointsTotal} />
-                  </Card>
-                  <Card style={{ minWidth: 200 }}>
-                    <Statistic title="Story Points concluídos" value={progress.metrics.jiraStoryPointsDone} />
-                  </Card>
-                  <Card style={{ minWidth: 220 }}>
-                    <Statistic title="Atividades sem estimativa" value={progress.metrics.jiraUnestimatedCount} />
-                  </Card>
-                  <Card style={{ minWidth: 220 }}>
-                    <Typography.Text type="secondary">Progresso médio das metas</Typography.Text>
-                    <Progress percent={Math.round(progress.metrics.goalsAvgProgress)} />
-                  </Card>
-                  <Card style={{ minWidth: 220 }}>
-                    <Typography.Text type="secondary">Atividades Jira concluídas</Typography.Text>
-                    <Progress
-                      percent={
-                        progress.metrics.jiraActivitiesTotal > 0
-                          ? Math.round((progress.metrics.jiraDoneCount / progress.metrics.jiraActivitiesTotal) * 100)
-                          : 0
-                      }
-                    />
-                  </Card>
-                  <Card style={{ minWidth: 240 }}>
-                    <Typography.Text type="secondary">Conclusão Jira por Story Points</Typography.Text>
-                    <Progress
-                      percent={
-                        progress.metrics.jiraStoryPointsTotal > 0
-                          ? Math.round(
-                              (progress.metrics.jiraStoryPointsDone / progress.metrics.jiraStoryPointsTotal) * 100
-                            )
-                          : 0
-                      }
-                    />
-                  </Card>
-                </Flex>
+                {summaryMetrics ? (
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                      gap: 12
+                    }}
+                  >
+                    {summaryMetrics.cards.map((card) => (
+                      <Card
+                        key={card.title}
+                        style={{
+                          ...summaryCardBaseStyle,
+                          background: card.background
+                        }}
+                        styles={{ body: { padding: 18 } }}
+                      >
+                        <Typography.Text type="secondary">{card.title}</Typography.Text>
+                        <Typography.Title
+                          level={2}
+                          style={{ margin: '4px 0 0 0', color: card.color, lineHeight: 1.15 }}
+                        >
+                          {card.value}
+                        </Typography.Title>
+                        <Typography.Text type="secondary">{card.subtitle}</Typography.Text>
+                      </Card>
+                    ))}
 
-                <Card title="Evolução de desempenho (1:1)">
-                  <PerformanceLineChart sessions={progress.oneOnOnes} />
+                    <Card
+                      style={{
+                        ...summaryProgressCardStyle,
+                        background: 'linear-gradient(145deg, #f7faff 0%, #ffffff 62%)'
+                      }}
+                      styles={{ body: { padding: 18 } }}
+                    >
+                      <Typography.Text type="secondary">Progresso médio das metas</Typography.Text>
+                      <Progress
+                        percent={Math.round(progress.metrics.goalsAvgProgress)}
+                        size="small"
+                        strokeColor="#722ed1"
+                        style={{ marginTop: 12, marginBottom: 0 }}
+                      />
+                    </Card>
+
+                    <Card
+                      style={{
+                        ...summaryProgressCardStyle,
+                        background: 'linear-gradient(145deg, #f6ffed 0%, #ffffff 62%)'
+                      }}
+                      styles={{ body: { padding: 18 } }}
+                    >
+                      <Typography.Text type="secondary">Atividades Jira concluídas</Typography.Text>
+                      <Progress
+                        percent={summaryMetrics.jiraDonePercent}
+                        size="small"
+                        strokeColor="#237804"
+                        style={{ marginTop: 12, marginBottom: 0 }}
+                      />
+                    </Card>
+
+                    <Card
+                      style={{
+                        ...summaryProgressCardStyle,
+                        background: 'linear-gradient(145deg, #fff7e6 0%, #ffffff 62%)'
+                      }}
+                      styles={{ body: { padding: 18 } }}
+                    >
+                      <Typography.Text type="secondary">Conclusão Jira por Story Points</Typography.Text>
+                      <Progress
+                        percent={summaryMetrics.storyPointsDonePercent}
+                        size="small"
+                        strokeColor="#d46b08"
+                        style={{ marginTop: 12, marginBottom: 0 }}
+                      />
+                    </Card>
+                  </div>
+                ) : null}
+
+                <Card
+                  title="Evolução de desempenho (1:1)"
+                  style={{
+                    ...summaryCardBaseStyle,
+                    background: 'linear-gradient(145deg, #f8fbff 0%, #ffffff 60%)'
+                  }}
+                  extra={<Typography.Text type="secondary">Escala de 1 a 10 por sessão</Typography.Text>}
+                >
+                  <PerformanceLineChart sessions={progress.oneOnOnes} isMobile={isMobile} />
                 </Card>
 
                 <Flex gap={12} wrap align="stretch">
@@ -1387,6 +1655,71 @@ export function PeopleProgress() {
                     )}
                   </Card>
                 </Flex>
+
+                <Card
+                  title={`Anotações de acompanhamento (${progress.notes.length})`}
+                  extra={
+                    <Button type="primary" onClick={openCreateNoteModal}>
+                      Nova anotação
+                    </Button>
+                  }
+                >
+                  {progress.notes.length === 0 ? (
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Sem anotações registradas" />
+                  ) : (
+                    <Table<ProgressNote>
+                      rowKey="id"
+                      dataSource={progress.notes}
+                      size={isMobile ? 'small' : 'middle'}
+                      scroll={{ x: 760 }}
+                      onRow={(note) => ({
+                        onClick: () => openEditNoteModal(note),
+                        style: { cursor: 'pointer' }
+                      })}
+                      pagination={{
+                        current: notesCurrentPage,
+                        pageSize: notesPageSize,
+                        showSizeChanger: true,
+                        showQuickJumper: true,
+                        pageSizeOptions: ['5', '10', '20', '50'],
+                        showTotal: (total, range) => `${range[0]}-${range[1]} de ${total} anotações`,
+                        onChange: (page, pageSize) => {
+                          setNotesCurrentPage(page);
+                          setNotesPageSize(pageSize);
+                        }
+                      }}
+                      columns={[
+                        {
+                          title: 'Anotação',
+                          dataIndex: 'title',
+                          render: (title: string, note: ProgressNote) => (
+                            <Space direction="vertical" size={0}>
+                              <Typography.Text strong>{title}</Typography.Text>
+                              <Typography.Text type="secondary">
+                                {markdownPreview(note.content)}
+                              </Typography.Text>
+                            </Space>
+                          )
+                        },
+                        {
+                          title: 'Autor',
+                          dataIndex: ['author', 'name'],
+                          filters: Array.from(new Set(progress.notes.map((note) => note.author.name)))
+                            .sort((a, b) => a.localeCompare(b, 'pt-BR'))
+                            .map((name) => ({ text: name, value: name })),
+                          onFilter: (value, note) => note.author.name === value
+                        },
+                        {
+                          title: 'Criada em',
+                          dataIndex: 'createdAt',
+                          defaultSortOrder: 'descend',
+                          sorter: (a, b) => dayjs(a.createdAt).valueOf() - dayjs(b.createdAt).valueOf(),
+                          render: (value: string) => dayjs(value).format('DD/MM/YYYY HH:mm')
+                        }
+                      ]}
+                    />
+                  )}
+                </Card>
 
                 <Card title={`Atividades Jira (${progress.metrics.jiraActivitiesTotal})`}>
                   {progress.jiraWarning ? <Alert type="warning" showIcon message={progress.jiraWarning} /> : null}
@@ -1930,6 +2263,75 @@ export function PeopleProgress() {
           <Form.Item label="Próximos passos" name="nextSteps">
             <Input.TextArea rows={2} placeholder="Plano de ação até o próximo 1:1" />
           </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={editingNote ? 'Editar anotação' : 'Nova anotação'}
+        open={noteModalOpen}
+        onCancel={closeNoteModal}
+        focusTriggerAfterClose={false}
+        footer={[
+          editingNote ? (
+            <Button
+              key="delete-note"
+              danger
+              loading={deletingNote}
+              disabled={savingNote || deletingNote}
+              onClick={() => void handleDeleteNote()}
+            >
+              Remover
+            </Button>
+          ) : null,
+          <Button key="cancel-note" onClick={closeNoteModal} disabled={savingNote || deletingNote}>
+            Cancelar
+          </Button>,
+          <Button
+            key="save-note"
+            type="primary"
+            loading={savingNote}
+            disabled={deletingNote}
+            onClick={() => noteForm.submit()}
+          >
+            Salvar
+          </Button>
+        ]}
+        width={isMobile ? 'calc(100vw - 24px)' : 920}
+        centered={!isMobile}
+        style={isMobile ? { top: 12 } : undefined}
+      >
+        <Form<NoteFormValues> form={noteForm} layout="vertical" onFinish={handleSaveNote}>
+          <Form.Item
+            label="Título"
+            name="title"
+            rules={[{ required: true, message: 'Informe um título para a anotação' }]}
+          >
+            <Input placeholder="Ex.: Sprint 28 - acompanhamento de evolução técnica" />
+          </Form.Item>
+
+          <Form.Item
+            label="Anotação (Markdown)"
+            name="content"
+            rules={[{ required: true, message: 'Escreva a anotação em Markdown' }]}
+          >
+            <div data-color-mode="light">
+              <MDEditor
+                value={noteContentValue}
+                onChange={(value) => noteForm.setFieldValue('content', value ?? '')}
+                preview="edit"
+                visibleDragbar={false}
+                textareaProps={{
+                  placeholder:
+                    'Use # para títulos, - para listas, **negrito** e organização da sua evolução.'
+                }}
+                height={isMobile ? 300 : 380}
+              />
+            </div>
+          </Form.Item>
+
+          <Typography.Text type="secondary">
+            Dica: use `#` para título, `##` para tópicos, listas com `-` e checklists com `- [ ]`.
+          </Typography.Text>
         </Form>
       </Modal>
     </AppShell>

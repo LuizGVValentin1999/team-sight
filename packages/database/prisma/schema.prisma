@@ -61,6 +61,7 @@ model User {
   authored     Note[]    @relation("AuthorNotes")
   goals        DevelopmentGoal[]
   oneOnOnes    OneOnOneSession[]
+  jiraSnapshots JiraReportSnapshot[]
 }
 
 model Note {
@@ -100,4 +101,28 @@ model OneOnOneSession {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model JiraReportSnapshot {
+  id              String   @id @default(cuid())
+  name            String
+  reportType      String   @default("SPRINT_DASHBOARD")
+  createdAt       DateTime @default(now())
+  createdById     String
+  createdBy       User     @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  projectKey      String?
+  person          String?
+  issueKey        String?
+  sprintNames     String?
+  days            Int
+  maxIssues       Int
+  jql             String?
+  periodStart     DateTime?
+  periodEnd       DateTime?
+  activitiesTotal Int?
+  doneCount       Int?
+  inProgressCount Int?
+  storyPointsTotal Float?
+  storyPointsDone Float?
+  data            Json
 }

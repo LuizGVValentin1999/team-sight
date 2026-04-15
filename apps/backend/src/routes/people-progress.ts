@@ -26,6 +26,11 @@ const sessionParamsSchema = z.object({
   sessionId: z.string().min(1)
 });
 
+const noteParamsSchema = z.object({
+  id: z.string().min(1),
+  noteId: z.string().min(1)
+});
+
 const issueDetailsParamsSchema = z.object({
   id: z.string().min(1),
   issueKey: z.string().trim().min(3)
@@ -68,6 +73,22 @@ const updateSessionSchema = z
   .refine((value) => Object.keys(value).length > 0, {
     message: 'Informe ao menos um campo para atualização'
   });
+
+const createNoteSchema = z.object({
+  title: z.string().trim().min(3).max(180),
+  content: z.string().trim().min(1).max(50000)
+});
+
+const updateNoteSchema = z
+  .object({
+    title: z.string().trim().min(3).max(180).optional(),
+    content: z.string().trim().min(1).max(50000).optional()
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: 'Informe ao menos um campo para atualização'
+  });
+
+const PERSON_PROGRESS_NOTE_TYPE = 'PERSON_PROGRESS';
 
 type JiraConfig = {
   baseUrl: string;
@@ -814,7 +835,7 @@ export async function peopleProgressRoutes(app: FastifyInstance) {
       return reply.status(404).send({ message: 'Pessoa não encontrada' });
     }
 
-    const [goals, sessions] = await Promise.all([
+    const [goals, sessions, notes] = await Promise.all([
       prisma.developmentGoal.findMany({
         where: { userId: id },
         orderBy: [{ status: 'asc' }, { updatedAt: 'desc' }]
@@ -823,6 +844,21 @@ export async function peopleProgressRoutes(app: FastifyInstance) {
         where: { userId: id },
         orderBy: { meetingDate: 'desc' },
         take: 24
+      }),
+      prisma.note.findMany({
+        where: {
+          userId: id,
+          type: PERSON_PROGRESS_NOTE_TYPE
+        },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          author: {
+            select: {
+              id: true,
+              name: true
+            }
+          }
+        }
       })
     ]);
 
@@ -956,6 +992,13 @@ export async function peopleProgressRoutes(app: FastifyInstance) {
       },
       goals,
       oneOnOnes: sessions,
+      notes: notes.map((note) => ({
+        id: note.id,
+        title: note.title,
+        content: note.content,
+        createdAt: note.createdAt,
+        author: note.author
+      })),
       jiraActivities,
       jiraWarning,
       openPullRequests,
@@ -1567,6 +1610,161 @@ export async function peopleProgressRoutes(app: FastifyInstance) {
 
     await prisma.oneOnOneSession.delete({
       where: { id: sessionId }
+    });
+
+    return reply.status(204).send();
+  });
+
+  app.post('/:id/progress/notes', async (request, reply) => {
+    const payload = requireAuth(request, reply);
+
+    if (!payload) {
+      return;
+    }
+
+    const parsedParams = personParamsSchema.safeParse(request.params);
+
+    if (!parsedParams.success) {
+      return reply.status(400).send({ message: 'Pessoa inválida' });
+    }
+
+    const parsedBody = createNoteSchema.safeParse(request.body);
+
+    if (!parsedBody.success) {
+      return reply.status(400).send({ message: 'Dados inválidos para anotação' });
+    }
+
+    const { id } = parsedParams.data;
+    const [personExists, authorExists] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id },
+        select: { id: true }
+      }),
+      prisma.user.findUnique({
+        where: { id: payload.sub },
+        select: { id: true, name: true }
+      })
+    ]);
+
+    if (!personExists) {
+      return reply.status(404).send({ message: 'Pessoa não encontrada' });
+    }
+
+    if (!authorExists) {
+      return reply.status(401).send({ message: 'Usuário autenticado não encontrado' });
+    }
+
+    const { title, content } = parsedBody.data;
+    const note = await prisma.note.create({
+      data: {
+        type: PERSON_PROGRESS_NOTE_TYPE,
+        userId: id,
+        authorId: payload.sub,
+        title,
+        content
+      },
+      include: {
+        author: {
+          select: {
+            id: true,
+            name: true
+          }
+        }
+      }
+    });
+
+    return reply.status(201).send({
+      note: {
+        id: note.id,
+        title: note.title,
+        content: note.content,
+        createdAt: note.createdAt,
+        author: note.author
+      }
+    });
+  });
+
+  app.patch('/:id/progress/notes/:noteId', async (request, reply) => {
+    const payload = requireAuth(request, reply);
+
+    if (!payload) {
+      return;
+    }
+
+    const parsedParams = noteParamsSchema.safeParse(request.params);
+
+    if (!parsedParams.success) {
+      return reply.status(400).send({ message: 'Anotação inválida' });
+    }
+
+    const parsedBody = updateNoteSchema.safeParse(request.body);
+
+    if (!parsedBody.success) {
+      return reply.status(400).send({ message: 'Dados inválidos para edição da anotação' });
+    }
+
+    const { id, noteId } = parsedParams.data;
+    const noteExists = await prisma.note.findUnique({
+      where: { id: noteId },
+      select: { id: true, userId: true, type: true }
+    });
+
+    if (!noteExists || noteExists.userId !== id || noteExists.type !== PERSON_PROGRESS_NOTE_TYPE) {
+      return reply.status(404).send({ message: 'Anotação não encontrada para esta pessoa' });
+    }
+
+    const updated = await prisma.note.update({
+      where: { id: noteId },
+      data: {
+        title: parsedBody.data.title?.trim(),
+        content: parsedBody.data.content?.trim()
+      },
+      include: {
+        author: {
+          select: {
+            id: true,
+            name: true
+          }
+        }
+      }
+    });
+
+    return reply.send({
+      note: {
+        id: updated.id,
+        title: updated.title,
+        content: updated.content,
+        createdAt: updated.createdAt,
+        author: updated.author
+      }
+    });
+  });
+
+  app.delete('/:id/progress/notes/:noteId', async (request, reply) => {
+    const payload = requireAuth(request, reply);
+
+    if (!payload) {
+      return;
+    }
+
+    const parsedParams = noteParamsSchema.safeParse(request.params);
+
+    if (!parsedParams.success) {
+      return reply.status(400).send({ message: 'Anotação inválida' });
+    }
+
+    const { id, noteId } = parsedParams.data;
+    const noteExists = await prisma.note.findUnique({
+      where: { id: noteId },
+      select: { id: true, userId: true, type: true }
+    });
+
+    if (!noteExists || noteExists.userId !== id || noteExists.type !== PERSON_PROGRESS_NOTE_TYPE) {
+      return reply.status(404).send({ message: 'Anotação não encontrada para esta pessoa' });
+    }
+
+    await prisma.note.delete({
+      where: { id: noteId }
     });
 
     return reply.status(204).send();

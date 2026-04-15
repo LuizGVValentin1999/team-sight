@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import { AntdRegistry } from '@ant-design/nextjs-registry';
 import { Providers } from './providers';
 import 'antd/dist/reset.css';
+import '@uiw/react-md-editor/markdown-editor.css';
+import '@uiw/react-markdown-preview/markdown.css';
 import './globals.css';
 
 export const metadata: Metadata = {
