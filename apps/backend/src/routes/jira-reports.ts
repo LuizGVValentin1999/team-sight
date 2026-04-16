@@ -2,6 +2,18 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../lib/auth.js';
 import { prisma } from '../lib/prisma.js';
+import {
+  formatDateForJql,
+  getJiraConfig,
+  jiraRequest,
+  normalizeJiraFieldLabel,
+  normalizeText,
+  quoteJqlValue,
+  sanitizeIssueKey,
+  splitCommaSeparated,
+  toFiniteNumber,
+  type JiraConfig
+} from '../lib/jira-common.js';
 
 type JiraIssue = {
   key: string;
@@ -187,62 +199,6 @@ const snapshotBodySchema = z.object({
   })
 });
 
-function getJiraConfig() {
-  const baseUrl = process.env.JIRA_BASE_URL?.trim();
-  const email = process.env.JIRA_EMAIL?.trim();
-  const apiToken = process.env.JIRA_API_TOKEN?.trim();
-
-  if (!baseUrl || !email || !apiToken) {
-    return null;
-  }
-
-  const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
-  const authHeader = `Basic ${Buffer.from(`${email}:${apiToken}`).toString('base64')}`;
-
-  return {
-    baseUrl: normalizedBaseUrl,
-    authHeader
-  };
-}
-
-function formatDateForJql(date: Date) {
-  return date.toISOString().slice(0, 10);
-}
-
-function normalizeText(value: string) {
-  return value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim();
-}
-
-function normalizeJiraFieldLabel(value: string) {
-  return value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim();
-}
-
-function toFiniteNumber(value: unknown) {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
-  }
-
-  if (typeof value === 'string') {
-    const normalized = value.replace(',', '.').trim();
-
-    if (!normalized) {
-      return null;
-    }
-
-    const parsed = Number(normalized);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  return null;
-}
 
 function normalizePersonName(value: string | null | undefined) {
   const trimmed = value?.trim();
@@ -348,36 +304,6 @@ function calculateBusinessMinutesBetween(start: Date, end: Date) {
   return totalMinutes;
 }
 
-function splitCommaSeparated(value: string | undefined) {
-  if (!value) {
-    return [];
-  }
-
-  return value
-    .split(',')
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
-function sanitizeIssueKey(value: string | undefined) {
-  if (!value) {
-    return null;
-  }
-
-  const trimmed = value.trim().toUpperCase();
-
-  // Formato comum de issue key: PROJ-123
-  if (!/^[A-Z][A-Z0-9_]*-\d+$/.test(trimmed)) {
-    return null;
-  }
-
-  return trimmed;
-}
-
-function quoteJqlValue(raw: string) {
-  const escaped = raw.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  return `"${escaped}"`;
-}
 
 function buildIssueScopeJql(issueKey: string) {
   const quoted = quoteJqlValue(issueKey);
@@ -444,30 +370,7 @@ function buildEffectiveJql(input: {
   return `${clauses.join(' AND ')} ORDER BY updated DESC`;
 }
 
-async function jiraRequest<T>(
-  config: { baseUrl: string; authHeader: string },
-  path: string,
-  init?: RequestInit
-): Promise<T> {
-  const response = await fetch(`${config.baseUrl}/rest/api/3${path}`, {
-    ...init,
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      Authorization: config.authHeader,
-      ...(init?.headers ?? {})
-    }
-  });
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Jira API ${response.status}: ${body.slice(0, 300)}`);
-  }
-
-  return (await response.json()) as T;
-}
-
-async function resolveSprintFieldId(config: { baseUrl: string; authHeader: string }) {
+async function resolveSprintFieldId(config: JiraConfig) {
   if (sprintFieldCache.has(config.baseUrl)) {
     return sprintFieldCache.get(config.baseUrl) ?? null;
   }
@@ -493,7 +396,7 @@ async function resolveSprintFieldId(config: { baseUrl: string; authHeader: strin
   }
 }
 
-async function resolveDoneStatuses(config: { baseUrl: string; authHeader: string }) {
+async function resolveDoneStatuses(config: JiraConfig) {
   if (doneStatusesCache.has(config.baseUrl)) {
     return doneStatusesCache.get(config.baseUrl) as Set<string>;
   }
@@ -520,7 +423,7 @@ async function resolveDoneStatuses(config: { baseUrl: string; authHeader: string
   }
 }
 
-async function resolveStoryPointsFieldId(config: { baseUrl: string; authHeader: string }) {
+async function resolveStoryPointsFieldId(config: JiraConfig) {
   const configuredField = process.env.JIRA_STORY_POINTS_FIELD?.trim();
 
   if (configuredField) {
@@ -682,7 +585,7 @@ function resolveThroughputPeriodStart(input: {
 }
 
 async function fetchIssues(
-  config: { baseUrl: string; authHeader: string },
+  config: JiraConfig,
   jql: string,
   maxIssues: number,
   extraFields: string[] = []
@@ -771,7 +674,7 @@ async function fetchIssues(
 }
 
 async function fetchAllIssueChangelog(
-  config: { baseUrl: string; authHeader: string },
+  config: JiraConfig,
   issueKey: string
 ) {
   const pageSize = 100;
