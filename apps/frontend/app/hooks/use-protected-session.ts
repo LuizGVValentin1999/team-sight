@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 export type ProtectedSessionUser = {
@@ -27,10 +27,16 @@ export function useProtectedSession({
   onInvalidSessionMessage
 }: UseProtectedSessionOptions) {
   const router = useRouter();
+  const onInvalidSessionMessageRef = useRef(onInvalidSessionMessage);
+  const bootstrapKeyRef = useRef<string | null>(null);
   const [mounted, setMounted] = useState(false);
   const [sessionChecking, setSessionChecking] = useState(true);
   const [token, setToken] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<ProtectedSessionUser | null>(null);
+
+  useEffect(() => {
+    onInvalidSessionMessageRef.current = onInvalidSessionMessage;
+  }, [onInvalidSessionMessage]);
 
   useEffect(() => {
     setMounted(true);
@@ -43,18 +49,26 @@ export function useProtectedSession({
       setCurrentUser(null);
 
       if (message) {
-        onInvalidSessionMessage?.(message);
+        onInvalidSessionMessageRef.current?.(message);
       }
 
       router.replace(redirectTo);
     },
-    [onInvalidSessionMessage, redirectTo, router]
+    [redirectTo, router]
   );
 
   useEffect(() => {
     if (!mounted) {
       return;
     }
+
+    const bootstrapKey = `${apiUrl}::${redirectTo}`;
+
+    if (bootstrapKeyRef.current === bootstrapKey) {
+      return;
+    }
+
+    bootstrapKeyRef.current = bootstrapKey;
 
     let cancelled = false;
 
