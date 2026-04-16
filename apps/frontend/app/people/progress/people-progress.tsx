@@ -2,8 +2,6 @@
 
 import '@ant-design/v5-patch-for-react-19';
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import dynamic from 'next/dynamic';
-import { useRouter } from 'next/navigation';
 import {
   Alert,
   Avatar,
@@ -23,34 +21,42 @@ import {
   Table,
   Tag,
   Typography,
+  Upload,
   message
 } from 'antd';
+import type { UploadProps } from 'antd';
 import dayjs from 'dayjs';
 import { ArrowLeftOutlined, UserOutlined } from '@ant-design/icons';
 import { Area, AreaChart, CartesianGrid, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { AutoLinkModal, type AutoLinkFormValues } from '../../components/auto-link-modal';
 import { AppLoading } from '../../components/app-loading';
 import { AppShell } from '../../components/app-shell';
+import { JiraIssueDetailsModal } from '../../components/jira-issue-details-modal';
+import { PersonFormModal, type PersonFormModalValues } from '../../components/person-form-modal';
+import { PeopleSelectorTable } from '../../components/people-selector-table';
+import { TeamSightMarkdownEditor } from '../../components/teamsight-markdown-editor';
+import { useProtectedSession } from '../../hooks/use-protected-session';
+import { type JiraIssueDetailsPayload } from '../../shared/jira';
+import {
+  type PersonRole,
+  roleLabelMap,
+  roleSupportsSeniority,
+  type Seniority,
+  seniorityLabelMap
+} from '../../shared/people';
+import { summaryCardBaseStyle } from '../../shared/ui-styles';
 import { useThemeMode } from '../../providers';
-
-const MDEditor = dynamic(() => import('@uiw/react-md-editor'), {
-  ssr: false
-});
 
 type PersonSummary = {
   id: string;
   name: string;
   email: string;
-  role: 'DEV' | 'QA' | 'BA' | 'PO' | 'UX' | 'TECH_LEAD' | 'QA_LEAD' | 'MANAGER';
-  seniority: 'INTERN' | 'JUNIOR' | 'MID' | 'SENIOR' | 'STAFF';
+  role: PersonRole;
+  seniority: Seniority;
   avatarUrl: string | null;
+  jiraUserKey: string | null;
+  gitUsername: string | null;
   active: boolean;
-};
-
-type AuthUser = {
-  id: string;
-  name: string;
-  email: string;
-  role: PersonSummary['role'];
 };
 
 type GoalStatus = 'NOT_STARTED' | 'IN_PROGRESS' | 'BLOCKED' | 'DONE';
@@ -112,74 +118,8 @@ type OpenPullRequest = {
   updatedAt: string;
 };
 
-type JiraIssueDetailsPayload = {
-  issue: {
-    key: string;
-    summary: string;
-    issueUrl: string;
-    createdAt: string;
-    currentStatus: string;
-    currentAssignee: string;
-  };
-  person: {
-    id: string;
-    name: string;
-    jiraUserKey: string | null;
-  };
-  businessHoursConfig: {
-    timezone: string;
-    workdays: string[];
-    windows: string[];
-  };
-  summary: {
-    totalBusinessHours: number;
-    totalTestBusinessHours: number;
-    totalDoubleCheckBusinessHours: number;
-  };
-  statusTimes: Array<{
-    status: string;
-    businessHours: number;
-  }>;
-  codeTimesByAssignee: Array<{
-    assignee: string;
-    businessHours: number;
-    statusTimes: Array<{
-      status: string;
-      businessHours: number;
-    }>;
-  }>;
-  testTimesByAssignee: Array<{
-    assignee: string;
-    businessHours: number;
-    statusTimes: Array<{
-      status: string;
-      businessHours: number;
-    }>;
-  }>;
-  doubleCheckTimesByAssignee: Array<{
-    assignee: string;
-    businessHours: number;
-    statusTimes: Array<{
-      status: string;
-      businessHours: number;
-    }>;
-  }>;
-  actionLog: Array<{
-    actionId: string;
-    at: string;
-    actionType: 'STATUS_CHANGE' | 'ASSIGNEE_CHANGE';
-    actor: string;
-    from: string | null;
-    to: string | null;
-    businessHoursSincePreviousAction: number | null;
-  }>;
-};
-
 type ProgressPayload = {
-  person: PersonSummary & {
-    jiraUserKey: string | null;
-    gitUsername: string | null;
-  };
+  person: PersonSummary;
   metrics: {
     sessionsCount: number;
     avgPerformanceScore: number | null;
@@ -243,6 +183,7 @@ type NoteFormValues = {
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3333';
 const githubOrgStorageKey = 'teamsight_github_org';
 const defaultGithubOrg = process.env.NEXT_PUBLIC_GITHUB_DEFAULT_ORG ?? '';
+const maxAvatarSizeMb = 0.5;
 
 const goalStatusOptions: Array<{ value: GoalStatus; label: string }> = [
   { value: 'NOT_STARTED', label: 'Não iniciada' },
@@ -258,41 +199,19 @@ const goalStatusColor: Record<GoalStatus, string> = {
   DONE: 'green'
 };
 
-const roleLabelMap: Record<PersonSummary['role'], string> = {
-  DEV: 'Dev',
-  QA: 'QA',
-  BA: 'BA',
-  PO: 'PO',
-  UX: 'UX',
-  TECH_LEAD: 'Tech Lead',
-  QA_LEAD: 'QA Lead',
-  MANAGER: 'Gestor'
-};
-
-const seniorityLabelMap: Record<PersonSummary['seniority'], string> = {
-  INTERN: 'Estagiário',
-  JUNIOR: 'Júnior',
-  MID: 'Pleno',
-  SENIOR: 'Sênior',
-  STAFF: 'Especialista'
-};
-
-const rolesWithoutSeniority = new Set<PersonSummary['role']>(['PO', 'BA', 'TECH_LEAD', 'QA_LEAD']);
-
-function roleSupportsSeniority(role: PersonSummary['role']) {
-  return !rolesWithoutSeniority.has(role);
-}
-
-const summaryCardBaseStyle: CSSProperties = {
-  borderRadius: 16,
-  border: '1px solid #dbe6f3',
-  boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)'
-};
-
 const summaryProgressCardStyle: CSSProperties = {
   ...summaryCardBaseStyle,
   minWidth: 240
 };
+
+async function fileToDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.onerror = () => reject(new Error('Falha ao processar imagem'));
+    reader.readAsDataURL(file);
+  });
+}
 
 function PerformanceTrendTag({ trend }: { trend: 'up' | 'down' | 'stable' }) {
   if (trend === 'up') {
@@ -359,10 +278,6 @@ function PerformanceLineChart({ sessions, isMobile }: { sessions: OneOnOneSessio
   );
 }
 
-function formatBusinessHours(value: number) {
-  return `${value.toFixed(2)} h`;
-}
-
 function markdownPreview(content: string, maxLength = 160) {
   const plainText = content
     .replace(/```[\s\S]*?```/g, ' ')
@@ -403,19 +318,16 @@ function releaseDocumentScrollLock() {
 }
 
 export function PeopleProgress() {
-  const router = useRouter();
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
   const { mode } = useThemeMode();
 
+  const [personForm] = Form.useForm<PersonFormModalValues>();
+  const [autoLinkForm] = Form.useForm<AutoLinkFormValues>();
   const [goalForm] = Form.useForm<GoalFormValues>();
   const [sessionForm] = Form.useForm<SessionFormValues>();
   const [noteForm] = Form.useForm<NoteFormValues>();
 
-  const [mounted, setMounted] = useState(false);
-  const [sessionChecking, setSessionChecking] = useState(true);
-  const [token, setToken] = useState<string | null>(null);
-  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [people, setPeople] = useState<PersonSummary[]>([]);
   const [peopleSearch, setPeopleSearch] = useState('');
   const [activePanel, setActivePanel] = useState<'list' | 'details'>('list');
@@ -426,6 +338,8 @@ export function PeopleProgress() {
   const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null);
   const [loadingPeople, setLoadingPeople] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(false);
+  const [savingPerson, setSavingPerson] = useState(false);
+  const [autoLinkLoading, setAutoLinkLoading] = useState(false);
   const [savingGoal, setSavingGoal] = useState(false);
   const [savingSession, setSavingSession] = useState(false);
   const [savingNote, setSavingNote] = useState(false);
@@ -435,6 +349,9 @@ export function PeopleProgress() {
   const [goalModalOpen, setGoalModalOpen] = useState(false);
   const [sessionModalOpen, setSessionModalOpen] = useState(false);
   const [noteModalOpen, setNoteModalOpen] = useState(false);
+  const [personModalOpen, setPersonModalOpen] = useState(false);
+  const [autoLinkModalOpen, setAutoLinkModalOpen] = useState(false);
+  const [editingPerson, setEditingPerson] = useState<PersonSummary | null>(null);
   const [editingGoal, setEditingGoal] = useState<DevelopmentGoal | null>(null);
   const [editingSession, setEditingSession] = useState<OneOnOneSession | null>(null);
   const [editingNote, setEditingNote] = useState<ProgressNote | null>(null);
@@ -454,13 +371,16 @@ export function PeopleProgress() {
   const [notesCurrentPage, setNotesCurrentPage] = useState(1);
   const [notesPageSize, setNotesPageSize] = useState(6);
   const [messageApi, contextHolder] = message.useMessage();
+  const { mounted, sessionChecking, token, currentUser, invalidateSession } = useProtectedSession({
+    apiUrl,
+    onInvalidSessionMessage: (text) => {
+      messageApi.error(text);
+    }
+  });
+  const currentAvatarUrl = Form.useWatch('avatarUrl', personForm) ?? '';
   const noteContentValue = Form.useWatch('content', noteForm) ?? '';
   const noteModalScrollTopRef = useRef<number>(0);
   const noteModalWasOpenedRef = useRef(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   useEffect(() => {
     if (!mounted) {
@@ -512,66 +432,36 @@ export function PeopleProgress() {
     };
   }, [noteModalOpen]);
 
-  useEffect(() => {
-    if (!mounted) {
-      return;
+
+  const handleAvatarSelect: NonNullable<UploadProps['beforeUpload']> = async (file) => {
+    const isImage = file.type.startsWith('image/');
+
+    if (!isImage) {
+      messageApi.error('Selecione um arquivo de imagem.');
+      return Upload.LIST_IGNORE;
     }
 
-    let cancelled = false;
+    const maxBytes = maxAvatarSizeMb * 1024 * 1024;
 
-    const bootstrapSession = async () => {
-      const storedToken = localStorage.getItem('teamsight_token');
+    if (file.size > maxBytes) {
+      messageApi.error(`A imagem deve ter no máximo ${maxAvatarSizeMb}MB.`);
+      return Upload.LIST_IGNORE;
+    }
 
-      if (!storedToken) {
-        if (!cancelled) {
-          setSessionChecking(false);
-        }
-        router.replace('/login');
-        return;
-      }
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      personForm.setFieldValue('avatarUrl', dataUrl);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Falha ao processar imagem';
+      messageApi.error(errorMessage);
+    }
 
-      try {
-        const response = await fetch(`${apiUrl}/auth/me`, {
-          headers: {
-            Authorization: `Bearer ${storedToken}`
-          }
-        });
+    return Upload.LIST_IGNORE;
+  };
 
-        const data = (await response.json()) as {
-          user?: AuthUser;
-          message?: string;
-        };
-
-        if (!response.ok || !data.user) {
-          throw new Error(data.message ?? 'Sessão inválida, faça login novamente.');
-        }
-
-        if (!cancelled) {
-          setCurrentUser(data.user);
-          setToken(storedToken);
-        }
-      } catch (error) {
-        localStorage.removeItem('teamsight_token');
-        localStorage.removeItem('teamsight_user_name');
-        if (!cancelled) {
-          const errorMessage =
-            error instanceof Error ? error.message : 'Sessão inválida, faça login novamente.';
-          messageApi.error(errorMessage);
-        }
-        router.replace('/login');
-      } finally {
-        if (!cancelled) {
-          setSessionChecking(false);
-        }
-      }
-    };
-
-    void bootstrapSession();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [mounted, router, messageApi]);
+  const clearAvatar = () => {
+    personForm.setFieldValue('avatarUrl', '');
+  };
 
   const loadPeople = useCallback(
     async (authToken: string) => {
@@ -694,6 +584,177 @@ export function PeopleProgress() {
     setJiraIssueDetail(null);
     setJiraIssueDetailKey(null);
   }, [selectedPersonId, progress?.person.id]);
+
+  const openCreatePersonModal = () => {
+    setEditingPerson(null);
+    personForm.setFieldsValue({
+      name: '',
+      email: '',
+      role: 'DEV',
+      seniority: 'MID',
+      jiraUserKey: '',
+      gitUsername: '',
+      avatarUrl: '',
+      active: true
+    });
+    setPersonModalOpen(true);
+  };
+
+  const openEditPersonModal = (person: PersonSummary) => {
+    setEditingPerson(person);
+    personForm.setFieldsValue({
+      name: person.name,
+      email: person.email,
+      role: person.role,
+      seniority: person.seniority,
+      jiraUserKey: person.jiraUserKey ?? '',
+      gitUsername: person.gitUsername ?? '',
+      avatarUrl: person.avatarUrl ?? '',
+      active: person.active
+    });
+    setPersonModalOpen(true);
+  };
+
+  const closePersonModal = () => {
+    setPersonModalOpen(false);
+    setEditingPerson(null);
+    personForm.resetFields();
+  };
+
+  const openAutoLinkModal = () => {
+    const lastUsedOrg = localStorage.getItem(githubOrgStorageKey)?.trim();
+    autoLinkForm.setFieldsValue({
+      githubOrgUrl: lastUsedOrg || defaultGithubOrg
+    });
+    setAutoLinkModalOpen(true);
+  };
+
+  const closeAutoLinkModal = () => {
+    setAutoLinkModalOpen(false);
+    autoLinkForm.resetFields();
+  };
+
+  const handleSubmitPerson = async (values: PersonFormModalValues) => {
+    if (!token) {
+      invalidateSession('Sessão inválida, faça login novamente.');
+      return;
+    }
+
+    const editingTarget = editingPerson;
+    const isEditMode = Boolean(editingTarget);
+    setSavingPerson(true);
+
+    try {
+      const endpoint = editingTarget ? `${apiUrl}/people/${editingTarget.id}` : `${apiUrl}/people`;
+      const method: 'POST' | 'PATCH' = editingTarget ? 'PATCH' : 'POST';
+
+      const response = await fetch(endpoint, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          ...values,
+          seniority: roleSupportsSeniority(values.role) ? values.seniority : ('STAFF' as const)
+        })
+      });
+
+      const data = (await response.json()) as {
+        person?: PersonSummary;
+        message?: string;
+      };
+
+      if (!response.ok || !data.person) {
+        if (response.status === 401) {
+          invalidateSession('Sessão inválida, faça login novamente.');
+        }
+        throw new Error(
+          data.message ?? (isEditMode ? 'Falha ao atualizar pessoa' : 'Falha ao cadastrar pessoa')
+        );
+      }
+
+      messageApi.success(isEditMode ? 'Pessoa atualizada com sucesso' : 'Pessoa cadastrada com sucesso');
+      closePersonModal();
+      await loadPeople(token);
+
+      if (selectedPersonId === data.person.id && data.person.active) {
+        await loadProgress(token, data.person.id);
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Erro inesperado';
+      messageApi.error(errorMessage);
+    } finally {
+      setSavingPerson(false);
+    }
+  };
+
+  const handleAutoLinkIntegrations = async (values: AutoLinkFormValues) => {
+    if (!token) {
+      invalidateSession('Sessão inválida, faça login novamente.');
+      return;
+    }
+
+    setAutoLinkLoading(true);
+
+    try {
+      const response = await fetch(`${apiUrl}/people/link-integrations-auto`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(values)
+      });
+
+      const data = (await response.json()) as {
+        message?: string;
+        summary?: {
+          total: number;
+          jira: {
+            linked: number;
+            photosUpdated: number;
+            notFound: number;
+            unchanged: number;
+            errors: number;
+          };
+          github: {
+            linked: number;
+            notFound: number;
+            unchanged: number;
+            errors: number;
+          };
+        };
+      };
+
+      if (!response.ok || !data.summary) {
+        if (response.status === 401) {
+          invalidateSession('Sessão inválida, faça login novamente.');
+        }
+        throw new Error(data.message ?? 'Falha na vinculação automática de integrações');
+      }
+
+      const { total, jira, github } = data.summary;
+      localStorage.setItem(githubOrgStorageKey, values.githubOrgUrl.trim());
+
+      messageApi.success(
+        `Concluído. Total: ${total}. Jira -> vinculados: ${jira.linked}, fotos: ${jira.photosUpdated}, não encontrados: ${jira.notFound}, sem mudança: ${jira.unchanged}, erros: ${jira.errors}. GitHub -> vinculados: ${github.linked}, não encontrados: ${github.notFound}, sem mudança: ${github.unchanged}, erros: ${github.errors}.`
+      );
+
+      await loadPeople(token);
+
+      if (selectedPersonId) {
+        await loadProgress(token, selectedPersonId);
+      }
+
+      closeAutoLinkModal();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Erro ao vincular integrações';
+      messageApi.error(errorMessage);
+    } finally {
+      setAutoLinkLoading(false);
+    }
+  };
 
   const openCreateGoalModal = () => {
     setEditingGoal(null);
@@ -1032,12 +1093,29 @@ export function PeopleProgress() {
     );
   }, [people, peopleSearch]);
 
+  const selectedPerson = useMemo(() => {
+    if (!selectedPersonId) {
+      return null;
+    }
+
+    return people.find((person) => person.id === selectedPersonId) ?? progress?.person ?? null;
+  }, [people, progress?.person, selectedPersonId]);
+
   const openPersonDetails = (personId: string) => {
     if (selectedPersonId !== personId) {
       setProgress(null);
     }
     setSelectedPersonId(personId);
     setActivePanel('details');
+  };
+
+  const openEditSelectedPersonModal = () => {
+    if (selectedPerson) {
+      openEditPersonModal(selectedPerson);
+      return;
+    }
+
+    messageApi.warning('Pessoa não encontrada na lista para edição.');
   };
 
   const goalTitleFilters = useMemo(() => {
@@ -1264,80 +1342,31 @@ export function PeopleProgress() {
           }}
         >
           <div style={{ width: '50%', paddingRight: 8 }}>
-            <Card
-              title="Pessoas do time"
-              extra={
-                <Button
-                  onClick={() => {
-                    if (token) {
-                      void loadPeople(token);
-                    }
-                  }}
-                  loading={loadingPeople}
-                >
-                  Atualizar
-                </Button>
+            <PeopleSelectorTable
+              people={filteredPeople}
+              search={peopleSearch}
+              onSearchChange={setPeopleSearch}
+              onRefresh={() => {
+                if (token) {
+                  void loadPeople(token);
+                }
+              }}
+              refreshing={loadingPeople}
+              onSelectPerson={openPersonDetails}
+              selectedPersonId={selectedPersonId}
+              isMobile={isMobile}
+              themeMode={mode}
+              headerActions={
+                <>
+                  <Button onClick={openAutoLinkModal} loading={autoLinkLoading}>
+                    Vinculação automática
+                  </Button>
+                  <Button type="primary" onClick={openCreatePersonModal}>
+                    Adicionar pessoa
+                  </Button>
+                </>
               }
-            >
-              <Flex vertical gap={12}>
-                <Input
-                  allowClear
-                  placeholder="Buscar por nome, e-mail, cargo ou nível"
-                  value={peopleSearch}
-                  onChange={(event) => setPeopleSearch(event.target.value)}
-                />
-
-                <Typography.Text type="secondary">
-                  {filteredPeople.length} pessoa(s) encontrada(s)
-                </Typography.Text>
-
-                {filteredPeople.length === 0 ? (
-                  <Empty description="Nenhuma pessoa encontrada para o filtro informado." />
-                ) : (
-                  <Table<PersonSummary>
-                    rowKey="id"
-                    dataSource={filteredPeople}
-                    size={isMobile ? 'small' : 'middle'}
-                    scroll={{ x: 560 }}
-                    onRow={(person) => ({
-                      onClick: () => openPersonDetails(person.id),
-                      style: {
-                        cursor: 'pointer',
-                        background:
-                          person.id === selectedPersonId ? (mode === 'dark' ? '#1f314a' : '#eaf4ff') : undefined
-                      }
-                    })}
-                    pagination={{
-                      pageSize: 8,
-                      showSizeChanger: true,
-                      pageSizeOptions: ['8', '12', '20', '50'],
-                      showTotal: (total, range) => `${range[0]}-${range[1]} de ${total} pessoas`
-                    }}
-                    columns={[
-                      {
-                        title: 'Pessoa',
-                        dataIndex: 'name',
-                        render: (_: string, person: PersonSummary) => (
-                          <Space align="start" size={10}>
-                            <Avatar src={person.avatarUrl ?? undefined} icon={<UserOutlined />} />
-                            <Space direction="vertical" size={2}>
-                              <Space size={6} wrap>
-                                <Typography.Text strong>{person.name}</Typography.Text>
-                                <Tag>{roleLabelMap[person.role]}</Tag>
-                                {roleSupportsSeniority(person.role) ? (
-                                  <Tag>{seniorityLabelMap[person.seniority]}</Tag>
-                                ) : null}
-                              </Space>
-                              <Typography.Text type="secondary">{person.email}</Typography.Text>
-                            </Space>
-                          </Space>
-                        )
-                      }
-                    ]}
-                  />
-                )}
-              </Flex>
-            </Card>
+            />
           </div>
 
           <div style={{ width: '50%', paddingLeft: 8 }}>
@@ -1416,25 +1445,31 @@ export function PeopleProgress() {
             {progress ? (
               <Flex vertical gap={16} style={{ marginTop: 16 }}>
                 <Card>
-                  <Flex align="center" gap={12} wrap>
-                    <Avatar size={64} src={progress.person.avatarUrl ?? undefined} icon={<UserOutlined />} />
-                    <div>
-                      <Typography.Title level={4} style={{ margin: 0 }}>
-                        {progress.person.name}
-                      </Typography.Title>
-                      <Typography.Text type="secondary">
-                        {progress.person.email} • {roleLabelMap[progress.person.role]}
-                        {roleSupportsSeniority(progress.person.role)
-                          ? ` • ${seniorityLabelMap[progress.person.seniority]}`
-                          : ''}
-                      </Typography.Text>
-                      <br />
-                      <Space size={8} style={{ marginTop: 8 }} wrap>
-                        <Tag>{progress.person.jiraUserKey ? 'Jira vinculado' : 'Sem Jira'}</Tag>
-                        <Tag>{progress.person.gitUsername ? 'Git vinculado' : 'Sem Git'}</Tag>
-                        <PerformanceTrendTag trend={progress.metrics.performanceTrend} />
-                      </Space>
-                    </div>
+                  <Flex align="center" justify="space-between" gap={12} wrap>
+                    <Flex align="center" gap={12} wrap>
+                      <Avatar size={64} src={progress.person.avatarUrl ?? undefined} icon={<UserOutlined />} />
+                      <div>
+                        <Typography.Title level={4} style={{ margin: 0 }}>
+                          {progress.person.name}
+                        </Typography.Title>
+                        <Typography.Text type="secondary">
+                          {progress.person.email} • {roleLabelMap[progress.person.role]}
+                          {roleSupportsSeniority(progress.person.role)
+                            ? ` • ${seniorityLabelMap[progress.person.seniority]}`
+                            : ''}
+                        </Typography.Text>
+                        <br />
+                        <Space size={8} style={{ marginTop: 8 }} wrap>
+                          <Tag>{progress.person.jiraUserKey ? 'Jira vinculado' : 'Sem Jira'}</Tag>
+                          <Tag>{progress.person.gitUsername ? 'Git vinculado' : 'Sem Git'}</Tag>
+                          <PerformanceTrendTag trend={progress.metrics.performanceTrend} />
+                        </Space>
+                      </div>
+                    </Flex>
+
+                    <Button onClick={openEditSelectedPersonModal} disabled={!selectedPerson}>
+                      Editar pessoa
+                    </Button>
                   </Flex>
                 </Card>
 
@@ -1976,228 +2011,40 @@ export function PeopleProgress() {
         </div>
       </div>
 
-      <Modal
-        title={jiraIssueDetail ? `Detalhes Jira: ${jiraIssueDetail.issue.key}` : 'Detalhes da tarefa Jira'}
+      <PersonFormModal
+        open={personModalOpen}
+        editing={Boolean(editingPerson)}
+        form={personForm}
+        currentAvatarUrl={currentAvatarUrl}
+        maxAvatarSizeMb={maxAvatarSizeMb}
+        confirmLoading={savingPerson}
+        isMobile={isMobile}
+        onCancel={closePersonModal}
+        onSubmit={() => personForm.submit()}
+        onFinish={handleSubmitPerson}
+        onAvatarSelect={handleAvatarSelect}
+        onClearAvatar={clearAvatar}
+      />
+
+      <AutoLinkModal
+        open={autoLinkModalOpen}
+        loading={autoLinkLoading}
+        isMobile={isMobile}
+        defaultGithubOrg={defaultGithubOrg}
+        form={autoLinkForm}
+        onCancel={closeAutoLinkModal}
+        onSubmit={() => autoLinkForm.submit()}
+        onFinish={handleAutoLinkIntegrations}
+      />
+
+      <JiraIssueDetailsModal
         open={jiraIssueModalOpen}
-        onCancel={closeJiraIssueModal}
-        footer={null}
-        width={isMobile ? 'calc(100vw - 24px)' : 980}
-        centered={!isMobile}
-        style={isMobile ? { top: 12 } : undefined}
-      >
-        {jiraIssueLoading ? (
-          <Card loading />
-        ) : jiraIssueDetail ? (
-          <Flex vertical gap={16}>
-            <Card size="small">
-              <Flex vertical gap={6}>
-                <Typography.Text strong>{jiraIssueDetail.issue.summary}</Typography.Text>
-                <Typography.Text type="secondary">
-                  Criada em {dayjs(jiraIssueDetail.issue.createdAt).format('DD/MM/YYYY HH:mm')} • Status atual:{' '}
-                  {jiraIssueDetail.issue.currentStatus} • Responsável atual: {jiraIssueDetail.issue.currentAssignee}
-                </Typography.Text>
-                <Typography.Text type="secondary">
-                  Horário útil: {jiraIssueDetail.businessHoursConfig.windows.join(' e ')} • Segunda a sexta
-                </Typography.Text>
-                <Typography.Text>
-                  Total em horas úteis: <Typography.Text strong>{formatBusinessHours(jiraIssueDetail.summary.totalBusinessHours)}</Typography.Text>
-                </Typography.Text>
-                <Typography.Text>
-                  Teste em horas úteis:{' '}
-                  <Typography.Text strong>
-                    {formatBusinessHours(jiraIssueDetail.summary.totalTestBusinessHours)}
-                  </Typography.Text>
-                </Typography.Text>
-                <Typography.Text>
-                  Double check em horas úteis:{' '}
-                  <Typography.Text strong>
-                    {formatBusinessHours(jiraIssueDetail.summary.totalDoubleCheckBusinessHours)}
-                  </Typography.Text>
-                </Typography.Text>
-                <Typography.Link href={jiraIssueDetail.issue.issueUrl} target="_blank">
-                  Abrir issue no Jira
-                </Typography.Link>
-              </Flex>
-            </Card>
-
-            <Card size="small" title="Tempo por etapa do Kanban">
-              <Table<{ status: string; businessHours: number }>
-                rowKey="status"
-                dataSource={jiraIssueDetail.statusTimes}
-                size="small"
-                pagination={false}
-                locale={{ emptyText: 'Sem tempo útil calculado para esta issue.' }}
-                columns={[
-                  {
-                    title: 'Etapa',
-                    dataIndex: 'status'
-                  },
-                  {
-                    title: 'Horas úteis',
-                    dataIndex: 'businessHours',
-                    sorter: (a, b) => a.businessHours - b.businessHours,
-                    defaultSortOrder: 'descend',
-                    render: (value: number) => formatBusinessHours(value)
-                  }
-                ]}
-              />
-            </Card>
-
-            <Card size="small" title="Tempo em code por dev">
-              <Table<{
-                assignee: string;
-                businessHours: number;
-                statusTimes: Array<{ status: string; businessHours: number }>;
-              }>
-                rowKey="assignee"
-                dataSource={jiraIssueDetail.codeTimesByAssignee}
-                size="small"
-                pagination={false}
-                locale={{ emptyText: 'Sem tempo em etapas de code para esta issue.' }}
-                columns={[
-                  {
-                    title: 'Dev',
-                    dataIndex: 'assignee'
-                  },
-                  {
-                    title: 'Horas úteis em code',
-                    dataIndex: 'businessHours',
-                    sorter: (a, b) => a.businessHours - b.businessHours,
-                    defaultSortOrder: 'descend',
-                    render: (value: number) => formatBusinessHours(value)
-                  },
-                  {
-                    title: 'Detalhe por etapa',
-                    dataIndex: 'statusTimes',
-                    render: (statusTimes: Array<{ status: string; businessHours: number }>) =>
-                      statusTimes.map((item) => `${item.status}: ${formatBusinessHours(item.businessHours)}`).join(' • ')
-                  }
-                ]}
-              />
-            </Card>
-
-            <Card size="small" title="Tempo em teste por responsável">
-              <Table<{
-                assignee: string;
-                businessHours: number;
-                statusTimes: Array<{ status: string; businessHours: number }>;
-              }>
-                rowKey="assignee"
-                dataSource={jiraIssueDetail.testTimesByAssignee}
-                size="small"
-                pagination={false}
-                locale={{ emptyText: 'Sem tempo em etapas de teste para esta issue.' }}
-                columns={[
-                  {
-                    title: 'Responsável',
-                    dataIndex: 'assignee'
-                  },
-                  {
-                    title: 'Horas úteis em teste',
-                    dataIndex: 'businessHours',
-                    sorter: (a, b) => a.businessHours - b.businessHours,
-                    defaultSortOrder: 'descend',
-                    render: (value: number) => formatBusinessHours(value)
-                  },
-                  {
-                    title: 'Detalhe por etapa',
-                    dataIndex: 'statusTimes',
-                    render: (statusTimes: Array<{ status: string; businessHours: number }>) =>
-                      statusTimes.map((item) => `${item.status}: ${formatBusinessHours(item.businessHours)}`).join(' • ')
-                  }
-                ]}
-              />
-            </Card>
-
-            <Card size="small" title="Tempo em double check por responsável">
-              <Table<{
-                assignee: string;
-                businessHours: number;
-                statusTimes: Array<{ status: string; businessHours: number }>;
-              }>
-                rowKey="assignee"
-                dataSource={jiraIssueDetail.doubleCheckTimesByAssignee}
-                size="small"
-                pagination={false}
-                locale={{ emptyText: 'Sem tempo em etapas de double check para esta issue.' }}
-                columns={[
-                  {
-                    title: 'Responsável',
-                    dataIndex: 'assignee'
-                  },
-                  {
-                    title: 'Horas úteis em double check',
-                    dataIndex: 'businessHours',
-                    sorter: (a, b) => a.businessHours - b.businessHours,
-                    defaultSortOrder: 'descend',
-                    render: (value: number) => formatBusinessHours(value)
-                  },
-                  {
-                    title: 'Detalhe por etapa',
-                    dataIndex: 'statusTimes',
-                    render: (statusTimes: Array<{ status: string; businessHours: number }>) =>
-                      statusTimes.map((item) => `${item.status}: ${formatBusinessHours(item.businessHours)}`).join(' • ')
-                  }
-                ]}
-              />
-            </Card>
-
-            <Card size="small" title="Histórico de ações (quem fez)">
-              <Table<{
-                actionId: string;
-                at: string;
-                actionType: 'STATUS_CHANGE' | 'ASSIGNEE_CHANGE';
-                actor: string;
-                from: string | null;
-                to: string | null;
-                businessHoursSincePreviousAction: number | null;
-              }>
-                rowKey="actionId"
-                dataSource={jiraIssueDetail.actionLog}
-                size="small"
-                pagination={false}
-                locale={{ emptyText: 'Sem ações registradas no histórico desta issue.' }}
-                columns={[
-                  {
-                    title: 'Data',
-                    dataIndex: 'at',
-                    defaultSortOrder: 'ascend',
-                    sorter: (a, b) => dayjs(a.at).valueOf() - dayjs(b.at).valueOf(),
-                    render: (value: string) => dayjs(value).format('DD/MM/YYYY HH:mm')
-                  },
-                  {
-                    title: 'Ação',
-                    dataIndex: 'actionType',
-                    render: (value: 'STATUS_CHANGE' | 'ASSIGNEE_CHANGE') =>
-                      value === 'STATUS_CHANGE' ? 'Mudança de status' : 'Mudança de responsável'
-                  },
-                  {
-                    title: 'De',
-                    dataIndex: 'from',
-                    render: (value: string | null) => value || '-'
-                  },
-                  {
-                    title: 'Para',
-                    dataIndex: 'to',
-                    render: (value: string | null) => value || '-'
-                  },
-                  {
-                    title: 'Feito por',
-                    dataIndex: 'actor'
-                  },
-                  {
-                    title: 'Horas úteis desde a ação anterior',
-                    dataIndex: 'businessHoursSincePreviousAction',
-                    render: (value: number | null) => (value === null ? '-' : formatBusinessHours(value))
-                  }
-                ]}
-              />
-            </Card>
-          </Flex>
-        ) : (
-          <Empty description={jiraIssueDetailKey ? `Sem detalhes para ${jiraIssueDetailKey}` : 'Selecione uma tarefa'} />
-        )}
-      </Modal>
+        loading={jiraIssueLoading}
+        detail={jiraIssueDetail}
+        detailKey={jiraIssueDetailKey}
+        isMobile={isMobile}
+        onClose={closeJiraIssueModal}
+      />
 
       <Modal
         title={editingGoal ? 'Editar meta' : 'Nova meta'}
@@ -2390,23 +2237,15 @@ export function PeopleProgress() {
             name="content"
             rules={[{ required: true, message: 'Escreva a anotação em Markdown' }]}
           >
-            <div data-color-mode={mode === 'dark' ? 'dark' : 'light'}>
-              {noteModalOpen ? (
-                <MDEditor
-                  value={noteContentValue}
-                  onChange={(value) => noteForm.setFieldValue('content', value ?? '')}
-                  preview="edit"
-                  extraCommands={[]}
-                  overflow={false}
-                  visibleDragbar={false}
-                  textareaProps={{
-                    placeholder:
-                      'Use # para títulos, - para listas, **negrito** e organização da sua evolução.'
-                  }}
-                  height={isMobile ? 300 : 380}
-                />
-              ) : null}
-            </div>
+            {noteModalOpen ? (
+              <TeamSightMarkdownEditor
+                value={noteContentValue}
+                onChange={(value) => noteForm.setFieldValue('content', value)}
+                colorMode={mode === 'dark' ? 'dark' : 'light'}
+                height={isMobile ? 300 : 380}
+                placeholder="Use # para títulos, - para listas, **negrito** e organização da sua evolução."
+              />
+            ) : null}
           </Form.Item>
 
           <Typography.Text type="secondary">

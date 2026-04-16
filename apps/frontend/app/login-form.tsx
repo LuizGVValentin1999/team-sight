@@ -59,7 +59,7 @@ export function LoginForm() {
         }
 
         localStorage.setItem('teamsight_user_name', data.user.name);
-        router.replace('/people');
+        router.replace('/people/progress');
         return;
       } catch {
         localStorage.removeItem('teamsight_token');
@@ -103,7 +103,7 @@ export function LoginForm() {
       messageApi.success(`Bem-vindo, ${data.user?.name ?? 'usuário'}!`);
       localStorage.setItem('teamsight_token', data.token);
       localStorage.setItem('teamsight_user_name', data.user?.name ?? 'Usuário');
-      router.replace('/people');
+      router.replace('/people/progress');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Erro inesperado';
       messageApi.error(errorMessage);

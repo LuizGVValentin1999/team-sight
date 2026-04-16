@@ -1,5 +1,5 @@
-import { PeopleManager } from './people-manager';
+import { redirect } from 'next/navigation';
 
 export default function PeoplePage() {
-  return <PeopleManager />;
+  redirect('/people/progress');
 }
