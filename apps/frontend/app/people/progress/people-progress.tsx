@@ -8,6 +8,7 @@ import {
   Button,
   Card,
   DatePicker,
+  Dropdown,
   Empty,
   Flex,
   Form,
@@ -24,9 +25,9 @@ import {
   Upload,
   message
 } from 'antd';
-import type { UploadProps } from 'antd';
+import type { MenuProps, UploadProps } from 'antd';
 import dayjs from 'dayjs';
-import { ArrowLeftOutlined, UserOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, DownloadOutlined, UserOutlined } from '@ant-design/icons';
 import { Area, AreaChart, CartesianGrid, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { AutoLinkModal, type AutoLinkFormValues } from '../../components/auto-link-modal';
 import { AppLoading } from '../../components/app-loading';
@@ -45,6 +46,7 @@ import {
   seniorityLabelMap
 } from '../../shared/people';
 import { summaryCardBaseStyle } from '../../shared/ui-styles';
+import { exportElementAsHtml, exportElementAsPdf, exportSheetsAsExcel } from '../../shared/export-utils';
 import { useThemeMode } from '../../providers';
 
 type PersonSummary = {
@@ -381,6 +383,7 @@ export function PeopleProgress() {
   const noteContentValue = Form.useWatch('content', noteForm) ?? '';
   const noteModalScrollTopRef = useRef<number>(0);
   const noteModalWasOpenedRef = useRef(false);
+  const exportContainerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!mounted) {
@@ -1319,6 +1322,166 @@ export function PeopleProgress() {
     }
   };
 
+  const exportMenuItems = useMemo<MenuProps['items']>(
+    () => [
+      { key: 'pdf', label: 'Baixar PDF' },
+      { key: 'excel', label: 'Baixar Excel' },
+      { key: 'html', label: 'Baixar HTML' }
+    ],
+    []
+  );
+
+  const buildPeopleProgressSheets = () => {
+    if (!progress) {
+      return [
+        {
+          name: 'Pessoas',
+          rows: filteredPeople.map((person) => ({
+            nome: person.name,
+            email: person.email,
+            cargo: roleLabelMap[person.role],
+            nivel: roleSupportsSeniority(person.role) ? seniorityLabelMap[person.seniority] : '-',
+            jira: person.jiraUserKey ?? '-',
+            git: person.gitUsername ?? '-',
+            ativo: person.active ? 'Sim' : 'Não'
+          }))
+        }
+      ];
+    }
+
+    return [
+      {
+        name: 'Resumo',
+        rows: [
+          { metrica: 'Pessoa', valor: progress.person.name },
+          { metrica: 'E-mail', valor: progress.person.email },
+          { metrica: 'Cargo', valor: roleLabelMap[progress.person.role] },
+          {
+            metrica: 'Nível',
+            valor: roleSupportsSeniority(progress.person.role)
+              ? seniorityLabelMap[progress.person.seniority]
+              : '-'
+          },
+          { metrica: 'Nota média 1:1', valor: progress.metrics.avgPerformanceScore ?? '-' },
+          { metrica: 'Última nota 1:1', valor: progress.metrics.lastPerformanceScore ?? '-' },
+          { metrica: 'Sessões 1:1', valor: progress.metrics.sessionsCount },
+          { metrica: 'Metas abertas', valor: progress.metrics.goalsOpen },
+          { metrica: 'Metas concluídas', valor: progress.metrics.goalsDone },
+          { metrica: 'PRs abertos', valor: progress.metrics.githubOpenPrCount },
+          { metrica: 'Atividades Jira', valor: progress.metrics.jiraActivitiesTotal },
+          { metrica: 'Atividades concluídas', valor: progress.metrics.jiraDoneCount },
+          { metrica: 'Story Points totais', valor: progress.metrics.jiraStoryPointsTotal }
+        ]
+      },
+      {
+        name: 'Atividades Jira',
+        rows: progress.jiraActivities.map((activity) => ({
+          key: activity.key,
+          resumo: activity.summary,
+          tipo: activity.issueType,
+          status: activity.status,
+          story_points: activity.storyPoints ?? '',
+          concluida: activity.isDone ? 'Sim' : 'Não',
+          criada_em: dayjs(activity.createdAt).format('DD/MM/YYYY HH:mm'),
+          atualizada_em: dayjs(activity.updatedAt).format('DD/MM/YYYY HH:mm'),
+          link: activity.issueUrl
+        }))
+      },
+      {
+        name: 'Metas',
+        rows: progress.goals.map((goal) => ({
+          titulo: goal.title,
+          status: goal.status,
+          progresso_percentual: goal.progress,
+          data_alvo: goal.targetDate ? dayjs(goal.targetDate).format('DD/MM/YYYY') : '',
+          descricao: goal.description ?? ''
+        }))
+      },
+      {
+        name: 'Historico_1_1',
+        rows: progress.oneOnOnes.map((session) => ({
+          data: dayjs(session.meetingDate).format('DD/MM/YYYY'),
+          nota: session.performanceScore,
+          resumo: session.summary,
+          destaques: session.highlights ?? '',
+          bloqueios: session.blockers ?? '',
+          proximos_passos: session.nextSteps ?? ''
+        }))
+      },
+      {
+        name: 'Notas',
+        rows: progress.notes.map((note) => ({
+          titulo: note.title,
+          autor: note.author.name,
+          criado_em: dayjs(note.createdAt).format('DD/MM/YYYY HH:mm'),
+          conteudo: note.content
+        }))
+      },
+      {
+        name: 'PRs_Abertos',
+        rows: progress.openPullRequests.map((pullRequest) => ({
+          repositorio: pullRequest.repoFullName,
+          numero: pullRequest.number,
+          titulo: pullRequest.title,
+          status: pullRequest.state,
+          draft: pullRequest.draft ? 'Sim' : 'Não',
+          criado_em: dayjs(pullRequest.createdAt).format('DD/MM/YYYY HH:mm'),
+          atualizado_em: dayjs(pullRequest.updatedAt).format('DD/MM/YYYY HH:mm'),
+          link: pullRequest.htmlUrl
+        }))
+      }
+    ];
+  };
+
+  const handleExportScreen = async (format: 'pdf' | 'excel' | 'html') => {
+    const baseName = progress
+      ? `acompanhamento-${progress.person.name}`
+      : 'acompanhamento-pessoas';
+
+    try {
+      if (format === 'excel') {
+        exportSheetsAsExcel({
+          sheets: buildPeopleProgressSheets(),
+          fileBaseName: baseName
+        });
+        messageApi.success('Excel gerado com sucesso.');
+        return;
+      }
+
+      const element = exportContainerRef.current;
+
+      if (!element) {
+        messageApi.warning('Não foi possível localizar a área da tela para exportar.');
+        return;
+      }
+
+      if (format === 'pdf') {
+        await exportElementAsPdf({
+          element,
+          fileBaseName: baseName
+        });
+        messageApi.success('PDF gerado com sucesso.');
+        return;
+      }
+
+      exportElementAsHtml({
+        element,
+        title: 'TeamSight - Acompanhamento',
+        fileBaseName: baseName
+      });
+      messageApi.success('HTML gerado com sucesso.');
+    } catch (error) {
+      const text = error instanceof Error ? error.message : 'Falha ao exportar tela.';
+      messageApi.error(text);
+    }
+  };
+
+  const handleExportMenuClick: MenuProps['onClick'] = ({ key }) => {
+    if (key === 'pdf' || key === 'excel' || key === 'html') {
+      void handleExportScreen(key);
+    }
+  };
+
   if (!mounted || sessionChecking || !token) {
     return <AppLoading />;
   }
@@ -1327,12 +1490,17 @@ export function PeopleProgress() {
     <AppShell
       selectedPath="/people/progress"
       title="Acompanhamento de Pessoas"
-      subtitle="Use em 1:1 para acompanhar metas, desempenho e atividades"
+      subtitle="Acompanhar metas, desempenho e atividades"
       currentUserName={currentUser?.name}
+      headerActions={
+        <Dropdown menu={{ items: exportMenuItems, onClick: handleExportMenuClick }} trigger={['click']}>
+          <Button icon={<DownloadOutlined />}>Baixar tela</Button>
+        </Dropdown>
+      }
     >
       {contextHolder}
 
-      <div style={{ overflow: 'hidden' }}>
+      <div ref={exportContainerRef} style={{ overflow: 'hidden' }}>
         <div
           style={{
             display: 'flex',

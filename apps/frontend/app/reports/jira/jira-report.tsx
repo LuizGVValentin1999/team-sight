@@ -1,11 +1,12 @@
 'use client';
 
 import '@ant-design/v5-patch-for-react-19';
-import { type CSSProperties, useEffect, useMemo, useState } from 'react';
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Button,
   Card,
+  Dropdown,
   Empty,
   Flex,
   Form,
@@ -21,7 +22,9 @@ import {
   Typography,
   message
 } from 'antd';
+import type { MenuProps } from 'antd';
 import dayjs from 'dayjs';
+import { DownloadOutlined } from '@ant-design/icons';
 import {
   Bar,
   BarChart,
@@ -39,6 +42,7 @@ import { AppLoading } from '../../components/app-loading';
 import { AppShell } from '../../components/app-shell';
 import { JiraIssueDetailsModal } from '../../components/jira-issue-details-modal';
 import { useProtectedSession } from '../../hooks/use-protected-session';
+import { exportElementAsHtml, exportElementAsPdf, exportSheetsAsExcel } from '../../shared/export-utils';
 import { type JiraIssueDetailsPayload } from '../../shared/jira';
 import { summaryCardBaseStyle } from '../../shared/ui-styles';
 
@@ -174,6 +178,7 @@ export function JiraReport() {
   const [snapshots, setSnapshots] = useState<JiraSnapshotListItem[]>([]);
   const [openingSnapshotId, setOpeningSnapshotId] = useState<string | null>(null);
   const [deletingSnapshotId, setDeletingSnapshotId] = useState<string | null>(null);
+  const exportContainerRef = useRef<HTMLDivElement | null>(null);
   const [chartDrilldown, setChartDrilldown] = useState<ChartDrilldownState>({
     open: false,
     title: '',
@@ -688,6 +693,139 @@ export function JiraReport() {
     }
   };
 
+  const exportMenuItems = useMemo<MenuProps['items']>(
+    () => [
+      { key: 'pdf', label: 'Baixar PDF' },
+      { key: 'excel', label: 'Baixar Excel' },
+      { key: 'html', label: 'Baixar HTML' }
+    ],
+    []
+  );
+
+  const buildJiraReportSheets = () => {
+    if (!report) {
+      return [
+        {
+          name: 'Relatorio',
+          rows: [{ mensagem: 'Carregue um relatório antes de exportar.' }]
+        }
+      ];
+    }
+
+    const nonRecusas = report.activities.filter((activity) => !isRecusaActivity(activity));
+    const heavyTasks = [...nonRecusas]
+      .filter((activity) => activity.storyPoints !== null)
+      .sort((a, b) => (b.storyPoints ?? 0) - (a.storyPoints ?? 0))
+      .slice(0, 20);
+
+    return [
+      {
+        name: 'Resumo',
+        rows: [
+          { metrica: 'Projeto', valor: report.filters.projectKey ?? '-' },
+          { metrica: 'Pessoa', valor: report.filters.person ?? '-' },
+          { metrica: 'Sprint(s)', valor: report.filters.sprintNames.join(', ') || '-' },
+          { metrica: 'Período início', valor: dayjs(report.period.start).format('DD/MM/YYYY HH:mm') },
+          { metrica: 'Período fim', valor: dayjs(report.period.end).format('DD/MM/YYYY HH:mm') },
+          { metrica: 'Atividades totais', valor: report.summary.activitiesTotal },
+          { metrica: 'Concluídas', valor: report.summary.doneCount },
+          { metrica: 'Em andamento', valor: report.summary.inProgressCount },
+          { metrica: 'SP total', valor: report.summary.storyPointsTotal },
+          { metrica: 'SP concluído', valor: report.summary.storyPointsDone },
+          { metrica: 'SP em andamento', valor: report.summary.storyPointsInProgress },
+          { metrica: 'Sem estimativa', valor: report.summary.unestimatedCount }
+        ]
+      },
+      {
+        name: 'Todas_Atividades',
+        rows: report.activities.map((activity) => ({
+          key: activity.key,
+          resumo: activity.summary,
+          tipo: activity.issueType,
+          status: activity.status,
+          story_points: activity.storyPoints ?? '',
+          concluida: activity.isDone ? 'Sim' : 'Não',
+          atualizada_em: dayjs(activity.updatedAt).format('DD/MM/YYYY HH:mm'),
+          link: activity.issueUrl
+        }))
+      },
+      {
+        name: 'Top_Pesadas',
+        rows: heavyTasks.map((activity) => ({
+          key: activity.key,
+          resumo: activity.summary,
+          tipo: activity.issueType,
+          story_points: activity.storyPoints ?? '',
+          status: activity.status,
+          concluida: activity.isDone ? 'Sim' : 'Não',
+          link: activity.issueUrl
+        }))
+      },
+      {
+        name: 'Recusas',
+        rows: report.activities
+          .filter(isRecusaActivity)
+          .map((activity) => ({
+            key: activity.key,
+            resumo: activity.summary,
+            status: activity.status,
+            story_points: activity.storyPoints ?? '',
+            atualizada_em: dayjs(activity.updatedAt).format('DD/MM/YYYY HH:mm'),
+            link: activity.issueUrl
+          }))
+      }
+    ];
+  };
+
+  const handleExportScreen = async (format: 'pdf' | 'excel' | 'html') => {
+    const baseName = report?.filters.projectKey
+      ? `relatorio-jira-${report.filters.projectKey}`
+      : 'relatorio-jira';
+
+    try {
+      if (format === 'excel') {
+        exportSheetsAsExcel({
+          sheets: buildJiraReportSheets(),
+          fileBaseName: baseName
+        });
+        messageApi.success('Excel gerado com sucesso.');
+        return;
+      }
+
+      const element = exportContainerRef.current;
+
+      if (!element) {
+        messageApi.warning('Não foi possível localizar a área da tela para exportar.');
+        return;
+      }
+
+      if (format === 'pdf') {
+        await exportElementAsPdf({
+          element,
+          fileBaseName: baseName
+        });
+        messageApi.success('PDF gerado com sucesso.');
+        return;
+      }
+
+      exportElementAsHtml({
+        element,
+        title: 'TeamSight - Relatório Jira',
+        fileBaseName: baseName
+      });
+      messageApi.success('HTML gerado com sucesso.');
+    } catch (error) {
+      const text = error instanceof Error ? error.message : 'Falha ao exportar relatório.';
+      messageApi.error(text);
+    }
+  };
+
+  const handleExportMenuClick: MenuProps['onClick'] = ({ key }) => {
+    if (key === 'pdf' || key === 'excel' || key === 'html') {
+      void handleExportScreen(key);
+    }
+  };
+
   if (!mounted || sessionChecking || !token) {
     return <AppLoading />;
   }
@@ -698,10 +836,16 @@ export function JiraReport() {
       title="Dashboard de Sprint (Jira)"
       subtitle="Throughput atual, tarefas mais pesadas e controle de recusas"
       currentUserName={currentUser?.name}
+      headerActions={
+        <Dropdown menu={{ items: exportMenuItems, onClick: handleExportMenuClick }} trigger={['click']}>
+          <Button icon={<DownloadOutlined />}>Baixar tela</Button>
+        </Dropdown>
+      }
     >
       {contextHolder}
 
-      <Flex vertical gap={16}>
+      <div ref={exportContainerRef}>
+        <Flex vertical gap={16}>
         <Card title="Filtros" style={filterCardStyle}>
           <Form<JiraReportFormValues>
             form={form}
@@ -834,7 +978,7 @@ export function JiraReport() {
 
         {errorMessage ? <Alert type="error" showIcon message={errorMessage} /> : null}
 
-        {report && dashboardData ? (
+          {report && dashboardData ? (
           <>
             <Flex gap={12} wrap="wrap">
               <Card
@@ -1275,8 +1419,9 @@ export function JiraReport() {
               />
             </Card>
           </>
-        ) : null}
-      </Flex>
+          ) : null}
+        </Flex>
+      </div>
 
       <Modal
         title="Histórico de snapshots"

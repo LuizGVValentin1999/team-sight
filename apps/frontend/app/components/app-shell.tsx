@@ -13,6 +13,7 @@ type AppShellProps = {
   subtitle: string;
   selectedPath: string;
   currentUserName?: string;
+  headerActions?: React.ReactNode;
   children: React.ReactNode;
 };
 
@@ -29,7 +30,14 @@ const menuItems: MenuProps['items'] = [
   }
 ];
 
-export function AppShell({ title, subtitle, selectedPath, currentUserName, children }: AppShellProps) {
+export function AppShell({
+  title,
+  subtitle,
+  selectedPath,
+  currentUserName,
+  headerActions,
+  children
+}: AppShellProps) {
   const router = useRouter();
   const { token } = theme.useToken();
   const { mode, setMode } = useThemeMode();
@@ -84,6 +92,7 @@ export function AppShell({ title, subtitle, selectedPath, currentUserName, child
             </div>
 
             <Flex align="center" gap={12}>
+              {headerActions}
               <Flex align="center" gap={8}>
                 <SunOutlined style={{ color: mode === 'dark' ? token.colorTextSecondary : token.colorPrimary }} />
                 <Switch
