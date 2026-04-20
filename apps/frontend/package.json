@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 3099",
     "build": "next build",
-    "start": "next start"
+    "start": "next start -p 3099"
   },
   "dependencies": {
     "@ant-design/icons": "^6.1.0",

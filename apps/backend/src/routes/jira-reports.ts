@@ -199,6 +199,10 @@ const snapshotBodySchema = z.object({
   })
 });
 
+const snapshotRenameBodySchema = z.object({
+  name: z.string().trim().min(2).max(140)
+});
+
 
 function normalizePersonName(value: string | null | undefined) {
   const trimmed = value?.trim();
@@ -207,6 +211,28 @@ function normalizePersonName(value: string | null | undefined) {
 
 function normalizeStatusForMatching(status: string) {
   return normalizeText(status).replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function isRecusaIssueType(issueType: string | undefined) {
+  const normalized = normalizeText(issueType ?? '');
+  return (
+    normalized.includes('recusa') ||
+    normalized.includes('rejeicao') ||
+    normalized.includes('rejeição')
+  );
+}
+
+function isRedChannelIssueType(issueType: string | undefined) {
+  const normalized = normalizeText(issueType ?? '');
+  return (
+    normalized.includes('red channel') ||
+    normalized.includes('canal red') ||
+    (normalized.includes('canal') && normalized.includes('vermelho'))
+  );
+}
+
+function shouldExcludeFromThroughput(issueType: string | undefined) {
+  return isRecusaIssueType(issueType) || isRedChannelIssueType(issueType);
 }
 
 function isCodeStatus(status: string) {
@@ -1224,9 +1250,12 @@ export async function jiraReportsRoutes(app: FastifyInstance) {
         };
       });
 
-      const activitiesWithPoints = activities.filter((activity) => activity.storyPoints !== null);
-      const doneCount = activities.filter((activity) => activity.isDone).length;
-      const inProgressCount = activities.length - doneCount;
+      const throughputActivities = activities.filter(
+        (activity) => !shouldExcludeFromThroughput(activity.issueType)
+      );
+      const activitiesWithPoints = throughputActivities.filter((activity) => activity.storyPoints !== null);
+      const doneCount = throughputActivities.filter((activity) => activity.isDone).length;
+      const inProgressCount = throughputActivities.length - doneCount;
       const storyPointsTotal = Number(
         activitiesWithPoints.reduce((sum, activity) => sum + (activity.storyPoints ?? 0), 0).toFixed(2)
       );
@@ -1253,13 +1282,13 @@ export async function jiraReportsRoutes(app: FastifyInstance) {
           storyPointsField: storyPointsFieldId
         },
         summary: {
-          activitiesTotal: activities.length,
+          activitiesTotal: throughputActivities.length,
           doneCount,
           inProgressCount,
           storyPointsTotal,
           storyPointsDone,
           storyPointsInProgress: Number((storyPointsTotal - storyPointsDone).toFixed(2)),
-          unestimatedCount: activities.length - activitiesWithPoints.length
+          unestimatedCount: throughputActivities.length - activitiesWithPoints.length
         },
         activities
       });
@@ -1401,6 +1430,62 @@ export async function jiraReportsRoutes(app: FastifyInstance) {
         message: 'Snapshot não encontrado'
       });
     }
+
+    return reply.send({
+      snapshot
+    });
+  });
+
+  app.patch('/snapshots/:id', async (request, reply) => {
+    const user = requireAuth(request, reply);
+
+    if (!user) {
+      return;
+    }
+
+    const parsedParams = snapshotParamsSchema.safeParse(request.params);
+
+    if (!parsedParams.success) {
+      return reply.status(400).send({
+        message: 'Snapshot inválido'
+      });
+    }
+
+    const parsedBody = snapshotRenameBodySchema.safeParse(request.body);
+
+    if (!parsedBody.success) {
+      return reply.status(400).send({
+        message: 'Dados inválidos para editar snapshot'
+      });
+    }
+
+    const updated = await prisma.jiraReportSnapshot.updateMany({
+      where: {
+        id: parsedParams.data.id,
+        createdById: user.sub
+      },
+      data: {
+        name: parsedBody.data.name
+      }
+    });
+
+    if (updated.count === 0) {
+      return reply.status(404).send({
+        message: 'Snapshot não encontrado'
+      });
+    }
+
+    const snapshot = await prisma.jiraReportSnapshot.findFirst({
+      where: {
+        id: parsedParams.data.id,
+        createdById: user.sub
+      },
+      select: {
+        id: true,
+        name: true,
+        createdAt: true
+      }
+    });
 
     return reply.send({
       snapshot

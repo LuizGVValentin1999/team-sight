@@ -182,7 +182,7 @@ type NoteFormValues = {
   content: string;
 };
 
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3333';
+const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3399';
 const githubOrgStorageKey = 'teamsight_github_org';
 const defaultGithubOrg = process.env.NEXT_PUBLIC_GITHUB_DEFAULT_ORG ?? '';
 const maxAvatarSizeMb = 0.5;

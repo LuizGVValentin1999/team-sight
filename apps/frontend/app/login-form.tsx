@@ -11,7 +11,7 @@ type LoginFormValues = {
   password: string;
 };
 
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3333';
+const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3399';
 
 export function LoginForm() {
   const router = useRouter();

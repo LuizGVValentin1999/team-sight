@@ -11,7 +11,7 @@ const app = Fastify({
 });
 
 await app.register(cors, {
-  origin: process.env.FRONTEND_ORIGIN ?? 'http://localhost:3000',
+  origin: process.env.FRONTEND_ORIGIN ?? 'http://localhost:3099',
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 });
@@ -36,7 +36,7 @@ await app.register(jiraReportsRoutes, {
   prefix: '/reports/jira'
 });
 
-const port = Number(process.env.PORT ?? 3333);
+const port = Number(process.env.PORT ?? 3399);
 
 try {
   await app.listen({ port, host: '0.0.0.0' });

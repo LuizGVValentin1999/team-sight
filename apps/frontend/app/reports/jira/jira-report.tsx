@@ -95,7 +95,7 @@ type JiraActivitiesResponse = {
   activities: JiraActivity[];
 };
 
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3333';
+const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3399';
 const donutColors = ['#1677ff', '#faad14', '#52c41a', '#ff4d4f'];
 const filterCardStyle: CSSProperties = {
   borderRadius: 16,
@@ -149,10 +149,24 @@ function isRecusaActivity(activity: JiraActivity) {
   return issueType.includes('recusa') || issueType.includes('rejeicao') || issueType.includes('rejeição');
 }
 
+function isRedChannelActivity(activity: JiraActivity) {
+  const issueType = normalizeText(activity.issueType);
+  return (
+    issueType.includes('red channel') ||
+    issueType.includes('canal red') ||
+    (issueType.includes('canal') && issueType.includes('vermelho'))
+  );
+}
+
+function isExcludedFromThroughput(activity: JiraActivity) {
+  return isRecusaActivity(activity) || isRedChannelActivity(activity);
+}
+
 export function JiraReport() {
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
   const [form] = Form.useForm<JiraReportFormValues>();
+  const [renameSnapshotForm] = Form.useForm<{ name: string }>();
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<JiraActivitiesResponse | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -178,6 +192,9 @@ export function JiraReport() {
   const [snapshots, setSnapshots] = useState<JiraSnapshotListItem[]>([]);
   const [openingSnapshotId, setOpeningSnapshotId] = useState<string | null>(null);
   const [deletingSnapshotId, setDeletingSnapshotId] = useState<string | null>(null);
+  const [renameSnapshotModalOpen, setRenameSnapshotModalOpen] = useState(false);
+  const [renamingSnapshot, setRenamingSnapshot] = useState<JiraSnapshotListItem | null>(null);
+  const [renameSnapshotSaving, setRenameSnapshotSaving] = useState(false);
   const exportContainerRef = useRef<HTMLDivElement | null>(null);
   const [chartDrilldown, setChartDrilldown] = useState<ChartDrilldownState>({
     open: false,
@@ -222,7 +239,7 @@ export function JiraReport() {
     }
 
     const recusas = report.activities.filter(isRecusaActivity);
-    const nonRecusas = report.activities.filter((activity) => !isRecusaActivity(activity));
+    const nonRecusas = report.activities.filter((activity) => !isExcludedFromThroughput(activity));
     const doneNonRecusas = nonRecusas.filter((activity) => activity.isDone).length;
     const inProgressNonRecusas = nonRecusas.length - doneNonRecusas;
     const throughputPercent =
@@ -693,6 +710,81 @@ export function JiraReport() {
     }
   };
 
+  const openRenameSnapshotModal = (snapshot: JiraSnapshotListItem) => {
+    setRenamingSnapshot(snapshot);
+    setRenameSnapshotModalOpen(true);
+    renameSnapshotForm.setFieldsValue({
+      name: snapshot.name
+    });
+  };
+
+  const closeRenameSnapshotModal = () => {
+    setRenameSnapshotModalOpen(false);
+    setRenamingSnapshot(null);
+    renameSnapshotForm.resetFields();
+  };
+
+  const handleRenameSnapshot = async () => {
+    if (!token || !renamingSnapshot) {
+      return;
+    }
+
+    try {
+      const values = await renameSnapshotForm.validateFields();
+      setRenameSnapshotSaving(true);
+
+      const response = await fetch(
+        `${apiUrl}/reports/jira/snapshots/${encodeURIComponent(renamingSnapshot.id)}`,
+        {
+          method: 'PATCH',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            name: values.name.trim()
+          })
+        }
+      );
+
+      const data = (await response.json()) as {
+        snapshot?: {
+          id: string;
+          name: string;
+          createdAt: string;
+        };
+        message?: string;
+      };
+
+      if (!response.ok || !data.snapshot) {
+        throw new Error(data.message ?? 'Não foi possível renomear snapshot');
+      }
+
+      setSnapshots((prev) =>
+        prev.map((snapshot) =>
+          snapshot.id === data.snapshot?.id
+            ? {
+                ...snapshot,
+                name: data.snapshot.name
+              }
+            : snapshot
+        )
+      );
+
+      messageApi.success('Nome do snapshot atualizado');
+      closeRenameSnapshotModal();
+    } catch (error) {
+      if (typeof error === 'object' && error !== null && 'errorFields' in error) {
+        return;
+      }
+
+      const text = error instanceof Error ? error.message : 'Erro ao renomear snapshot';
+      messageApi.error(text);
+    } finally {
+      setRenameSnapshotSaving(false);
+    }
+  };
+
   const exportMenuItems = useMemo<MenuProps['items']>(
     () => [
       { key: 'pdf', label: 'Baixar PDF' },
@@ -712,7 +804,7 @@ export function JiraReport() {
       ];
     }
 
-    const nonRecusas = report.activities.filter((activity) => !isRecusaActivity(activity));
+    const nonRecusas = report.activities.filter((activity) => !isExcludedFromThroughput(activity));
     const heavyTasks = [...nonRecusas]
       .filter((activity) => activity.storyPoints !== null)
       .sort((a, b) => (b.storyPoints ?? 0) - (a.storyPoints ?? 0))
@@ -834,7 +926,7 @@ export function JiraReport() {
     <AppShell
       selectedPath="/reports/jira"
       title="Dashboard de Sprint (Jira)"
-      subtitle="Throughput atual, tarefas mais pesadas e controle de recusas"
+      subtitle="Throughput atual sem recusas e canal vermelho, tarefas mais pesadas e controle de recusas"
       currentUserName={currentUser?.name}
       headerActions={
         <Dropdown menu={{ items: exportMenuItems, onClick: handleExportMenuClick }} trigger={['click']}>
@@ -989,7 +1081,7 @@ export function JiraReport() {
                   background: 'linear-gradient(150deg, #eff6ff 0%, #ffffff 60%)'
                 }}
               >
-                <Typography.Text type="secondary">Throughput atual</Typography.Text>
+                <Typography.Text type="secondary">Throughput atual (sem recusas e canal vermelho)</Typography.Text>
                 <Typography.Title level={2} style={{ margin: '2px 0 0 0', color: '#1d39c4' }}>
                   {dashboardData.throughputPercent.toFixed(1)}%
                 </Typography.Title>
@@ -1065,7 +1157,7 @@ export function JiraReport() {
 
             <Flex gap={12} wrap="wrap">
               <Card
-                title="Throughput visual"
+                title="Throughput visual (sem recusas e canal vermelho)"
                 style={{ ...summaryCardBaseStyle, minWidth: 320, flex: '1 1 320px' }}
                 extra={<Typography.Text type="secondary">Clique no gráfico para detalhar</Typography.Text>}
               >
@@ -1307,7 +1399,7 @@ export function JiraReport() {
               />
             </Card>
 
-            <Card title={`Todas as atividades Jira (${report.summary.activitiesTotal})`}>
+            <Card title={`Todas as atividades Jira (${report.activities.length})`}>
               <Table<JiraActivity>
                 rowKey="key"
                 dataSource={report.activities}
@@ -1488,7 +1580,7 @@ export function JiraReport() {
             {
               title: 'Ações',
               key: 'actions',
-              width: 210,
+              width: 290,
               render: (_: unknown, snapshot: JiraSnapshotListItem) => (
                 <Space>
                   <Button
@@ -1498,6 +1590,13 @@ export function JiraReport() {
                     onClick={() => void handleOpenSnapshot(snapshot.id)}
                   >
                     Abrir
+                  </Button>
+                  <Button
+                    size="small"
+                    onClick={() => openRenameSnapshotModal(snapshot)}
+                    disabled={openingSnapshotId === snapshot.id || deletingSnapshotId === snapshot.id}
+                  >
+                    Renomear
                   </Button>
                   <Button
                     danger
@@ -1512,6 +1611,33 @@ export function JiraReport() {
             }
           ]}
         />
+      </Modal>
+
+      <Modal
+        title="Editar nome do snapshot"
+        open={renameSnapshotModalOpen}
+        onCancel={closeRenameSnapshotModal}
+        onOk={() => void handleRenameSnapshot()}
+        okText="Salvar"
+        cancelText="Cancelar"
+        confirmLoading={renameSnapshotSaving}
+        width={isMobile ? 'calc(100vw - 24px)' : 520}
+        centered={!isMobile}
+        style={isMobile ? { top: 12 } : undefined}
+      >
+        <Form form={renameSnapshotForm} layout="vertical">
+          <Form.Item
+            label="Nome"
+            name="name"
+            rules={[
+              { required: true, message: 'Informe o nome do snapshot' },
+              { min: 2, message: 'Use pelo menos 2 caracteres' },
+              { max: 140, message: 'Use no máximo 140 caracteres' }
+            ]}
+          >
+            <Input placeholder="Ex.: Sprint 24 - Fechamento" maxLength={140} />
+          </Form.Item>
+        </Form>
       </Modal>
 
       <Modal
