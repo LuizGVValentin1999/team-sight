@@ -14,6 +14,12 @@ import {
   toFiniteNumber,
   type JiraConfig
 } from '../lib/jira-common.js';
+import {
+  calculateBusinessMinutesBetween,
+  getBrazilAndCuritibaHolidayDateSetForRange,
+  getBusinessHoursConfig,
+  minutesToHours
+} from '../lib/business-calendar.js';
 
 const goalStatusValues = ['NOT_STARTED', 'IN_PROGRESS', 'BLOCKED', 'DONE'] as const;
 
@@ -585,53 +591,6 @@ function isTestStatus(status: string) {
   );
 }
 
-function minutesToHours(minutes: number) {
-  return Number((minutes / 60).toFixed(2));
-}
-
-function calculateBusinessMinutesBetween(start: Date, end: Date) {
-  if (end.getTime() <= start.getTime()) {
-    return 0;
-  }
-
-  let totalMinutes = 0;
-  const cursor = new Date(start.getTime());
-  cursor.setHours(0, 0, 0, 0);
-  const endDay = new Date(end.getTime());
-  endDay.setHours(0, 0, 0, 0);
-
-  while (cursor.getTime() <= endDay.getTime()) {
-    const dayOfWeek = cursor.getDay();
-    const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
-
-    if (isWeekday) {
-      const windows = [
-        { startHour: 8, startMinute: 30, endHour: 12, endMinute: 0 },
-        { startHour: 13, startMinute: 30, endHour: 18, endMinute: 0 }
-      ];
-
-      for (const window of windows) {
-        const windowStart = new Date(cursor.getTime());
-        windowStart.setHours(window.startHour, window.startMinute, 0, 0);
-
-        const windowEnd = new Date(cursor.getTime());
-        windowEnd.setHours(window.endHour, window.endMinute, 0, 0);
-
-        const overlapStart = Math.max(start.getTime(), windowStart.getTime());
-        const overlapEnd = Math.min(end.getTime(), windowEnd.getTime());
-
-        if (overlapEnd > overlapStart) {
-          totalMinutes += (overlapEnd - overlapStart) / (1000 * 60);
-        }
-      }
-    }
-
-    cursor.setDate(cursor.getDate() + 1);
-  }
-
-  return totalMinutes;
-}
-
 async function fetchAllIssueChangelog(config: JiraConfig, issueKey: string) {
   const histories: JiraChangelogResponse['values'] = [];
   const pageSize = 100;
@@ -741,7 +700,7 @@ export async function peopleProgressRoutes(app: FastifyInstance) {
       return reply.status(404).send({ message: 'Pessoa não encontrada' });
     }
 
-    const [goals, sessions, notes] = await Promise.all([
+    const [goals, sessions, notes, nextVacation] = await Promise.all([
       prisma.developmentGoal.findMany({
         where: { userId: id },
         orderBy: [{ status: 'asc' }, { updatedAt: 'desc' }]
@@ -764,6 +723,21 @@ export async function peopleProgressRoutes(app: FastifyInstance) {
               name: true
             }
           }
+        }
+      }),
+      prisma.teamVacation.findFirst({
+        where: {
+          userId: id,
+          endDate: {
+            gte: new Date()
+          }
+        },
+        orderBy: [{ startDate: 'asc' }, { createdAt: 'desc' }],
+        select: {
+          id: true,
+          startDate: true,
+          endDate: true,
+          description: true
         }
       })
     ]);
@@ -877,7 +851,10 @@ export async function peopleProgressRoutes(app: FastifyInstance) {
     const jiraUnestimatedCount = jiraActivities.length - jiraActivitiesWithPoints.length;
 
     return reply.send({
-      person,
+      person: {
+        ...person,
+        nextVacation
+      },
       metrics: {
         sessionsCount,
         avgPerformanceScore,
@@ -1019,6 +996,10 @@ export async function peopleProgressRoutes(app: FastifyInstance) {
       let currentAssignee = initialAssignee;
       let segmentStart = new Date(issue.fields.created);
       const periodEnd = new Date();
+      const holidayDateSet = await getBrazilAndCuritibaHolidayDateSetForRange(
+        new Date(issue.fields.created),
+        periodEnd
+      );
 
       const segments: Array<{
         start: Date;
@@ -1107,7 +1088,9 @@ export async function peopleProgressRoutes(app: FastifyInstance) {
           }
 
           const businessHoursSincePreviousAction = previousActionAt
-            ? minutesToHours(calculateBusinessMinutesBetween(previousActionAt, history.at))
+            ? minutesToHours(
+                calculateBusinessMinutesBetween(previousActionAt, history.at, { holidayDateSet })
+              )
             : null;
 
           actionLog.push({
@@ -1125,7 +1108,9 @@ export async function peopleProgressRoutes(app: FastifyInstance) {
       }
 
       for (const segment of segments) {
-        const segmentMinutes = calculateBusinessMinutesBetween(segment.start, segment.end);
+        const segmentMinutes = calculateBusinessMinutesBetween(segment.start, segment.end, {
+          holidayDateSet
+        });
 
         if (segmentMinutes <= 0) {
           continue;
@@ -1252,11 +1237,7 @@ export async function peopleProgressRoutes(app: FastifyInstance) {
           name: person.name,
           jiraUserKey: person.jiraUserKey
         },
-        businessHoursConfig: {
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'server-local',
-          workdays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
-          windows: ['08:30-12:00', '13:30-18:00']
-        },
+        businessHoursConfig: getBusinessHoursConfig(),
         summary: {
           totalBusinessHours,
           totalTestBusinessHours,

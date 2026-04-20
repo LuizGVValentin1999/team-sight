@@ -3,6 +3,8 @@
 import { Avatar, Button, Card, Empty, Flex, Input, Space, Table, Tag, Typography } from 'antd';
 import { UserOutlined } from '@ant-design/icons';
 import {
+  formatVacationPeriod,
+  type PersonNextVacation,
   type PersonRole,
   roleLabelMap,
   roleSupportsSeniority,
@@ -17,6 +19,7 @@ export type PeopleSelectorItem = {
   role: PersonRole;
   seniority: Seniority;
   avatarUrl: string | null;
+  nextVacation?: PersonNextVacation | null;
 };
 
 type PeopleSelectorTableProps = {
@@ -103,6 +106,9 @@ export function PeopleSelectorTable({
                         ) : null}
                       </Space>
                       <Typography.Text type="secondary">{person.email}</Typography.Text>
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                        Próximas férias: {formatVacationPeriod(person.nextVacation)}
+                      </Typography.Text>
                     </Space>
                   </Space>
                 )

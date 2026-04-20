@@ -39,6 +39,8 @@ import { TeamSightMarkdownEditor } from '../../components/teamsight-markdown-edi
 import { useProtectedSession } from '../../hooks/use-protected-session';
 import { type JiraIssueDetailsPayload } from '../../shared/jira';
 import {
+  formatVacationPeriod,
+  type PersonNextVacation,
   type PersonRole,
   roleLabelMap,
   roleSupportsSeniority,
@@ -58,6 +60,7 @@ type PersonSummary = {
   avatarUrl: string | null;
   jiraUserKey: string | null;
   gitUsername: string | null;
+  nextVacation?: PersonNextVacation | null;
   active: boolean;
 };
 
@@ -1626,8 +1629,10 @@ export function PeopleProgress() {
                             ? ` • ${seniorityLabelMap[progress.person.seniority]}`
                             : ''}
                         </Typography.Text>
-                        <br />
-                        <Space size={8} style={{ marginTop: 8 }} wrap>
+                        <Typography.Text type="secondary" style={{ display: 'block', marginTop: 2 }}>
+                          Próximas férias: {formatVacationPeriod(selectedPerson?.nextVacation ?? progress.person.nextVacation)}
+                        </Typography.Text>
+                        <Space size={8} style={{ marginTop: 4 }} wrap>
                           <Tag>{progress.person.jiraUserKey ? 'Jira vinculado' : 'Sem Jira'}</Tag>
                           <Tag>{progress.person.gitUsername ? 'Git vinculado' : 'Sem Git'}</Tag>
                           <PerformanceTrendTag trend={progress.metrics.performanceTrend} />

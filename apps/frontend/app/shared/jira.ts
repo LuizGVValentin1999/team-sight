@@ -16,6 +16,7 @@ export type JiraIssueDetailsPayload = {
     timezone: string;
     workdays: string[];
     windows: string[];
+    holidayPolicy?: string;
   };
   summary: {
     totalBusinessHours: number;

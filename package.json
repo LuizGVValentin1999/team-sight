@@ -15,7 +15,8 @@
     "prod": "npm i && npm run build && npm run start",
     "db:generate": "npm run prisma:generate -w @teamsight/database",
     "db:migrate": "npm run prisma:migrate -w @teamsight/database",
-    "db:seed": "npm run prisma:seed -w @teamsight/database"
+    "db:seed": "npm run prisma:seed -w @teamsight/database",
+    "db:studio": "DATABASE_URL=\"file:$(pwd)/packages/database/prisma/dev.db\" npx prisma studio --schema packages/database/prisma/schema.prisma --port 5555"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

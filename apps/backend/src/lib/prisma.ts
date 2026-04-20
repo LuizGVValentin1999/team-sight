@@ -42,3 +42,26 @@ export const prisma =
 if (process.env.NODE_ENV !== 'production') {
   globalForPrisma.prisma = prisma;
 }
+
+export async function ensureDatabaseSchema() {
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "TeamVacation" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "userId" TEXT NOT NULL,
+      "startDate" DATETIME NOT NULL,
+      "endDate" DATETIME NOT NULL,
+      "description" TEXT,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" DATETIME NOT NULL,
+      CONSTRAINT "TeamVacation_userId_fkey"
+        FOREIGN KEY ("userId") REFERENCES "User" ("id")
+        ON DELETE CASCADE ON UPDATE CASCADE
+    );
+  `);
+  await prisma.$executeRawUnsafe(
+    'CREATE INDEX IF NOT EXISTS "TeamVacation_userId_idx" ON "TeamVacation"("userId");'
+  );
+  await prisma.$executeRawUnsafe(
+    'CREATE INDEX IF NOT EXISTS "TeamVacation_startDate_endDate_idx" ON "TeamVacation"("startDate", "endDate");'
+  );
+}

@@ -62,6 +62,7 @@ model User {
   goals        DevelopmentGoal[]
   oneOnOnes    OneOnOneSession[]
   jiraSnapshots JiraReportSnapshot[]
+  vacations    TeamVacation[]
 }
 
 model Note {
@@ -125,4 +126,18 @@ model JiraReportSnapshot {
   storyPointsTotal Float?
   storyPointsDone Float?
   data            Json
+}
+
+model TeamVacation {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startDate   DateTime
+  endDate     DateTime
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@index([startDate, endDate])
 }

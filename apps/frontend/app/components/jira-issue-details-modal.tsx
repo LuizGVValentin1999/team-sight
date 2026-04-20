@@ -44,7 +44,8 @@ export function JiraIssueDetailsModal({
                 {detail.issue.currentStatus} • Responsável atual: {detail.issue.currentAssignee}
               </Typography.Text>
               <Typography.Text type="secondary">
-                Horário útil: {detail.businessHoursConfig.windows.join(' e ')} • Segunda a sexta
+                Horário útil: {detail.businessHoursConfig.windows.join(' e ')} • Segunda a sexta •{' '}
+                {detail.businessHoursConfig.holidayPolicy ?? 'Feriados nacionais do Brasil desconsiderados'}
               </Typography.Text>
               <Typography.Text>
                 Total em horas úteis:{' '}

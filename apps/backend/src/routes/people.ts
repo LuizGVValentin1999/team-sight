@@ -430,24 +430,61 @@ export async function peopleRoutes(app: FastifyInstance) {
       return;
     }
 
-    const people = await prisma.user.findMany({
-      orderBy: { createdAt: 'desc' },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        seniority: true,
-        jiraUserKey: true,
-        gitUsername: true,
-        avatarUrl: true,
-        hiredAt: true,
-        active: true,
-        createdAt: true
-      }
-    });
+    const now = new Date();
+    const [people, upcomingVacations] = await Promise.all([
+      prisma.user.findMany({
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          seniority: true,
+          jiraUserKey: true,
+          gitUsername: true,
+          avatarUrl: true,
+          hiredAt: true,
+          active: true,
+          createdAt: true
+        }
+      }),
+      prisma.teamVacation.findMany({
+        where: {
+          endDate: { gte: now }
+        },
+        orderBy: [{ startDate: 'asc' }, { createdAt: 'desc' }],
+        select: {
+          id: true,
+          userId: true,
+          startDate: true,
+          endDate: true,
+          description: true
+        }
+      })
+    ]);
 
-    return reply.send({ people });
+    const nextVacationByUserId = new Map<
+      string,
+      {
+        id: string;
+        startDate: Date;
+        endDate: Date;
+        description: string | null;
+      }
+    >();
+
+    for (const vacation of upcomingVacations) {
+      if (!nextVacationByUserId.has(vacation.userId)) {
+        nextVacationByUserId.set(vacation.userId, vacation);
+      }
+    }
+
+    return reply.send({
+      people: people.map((person) => ({
+        ...person,
+        nextVacation: nextVacationByUserId.get(person.id) ?? null
+      }))
+    });
   });
 
   app.post('/link-jira-by-email', async (request, reply) => {

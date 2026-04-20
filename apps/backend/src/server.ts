@@ -5,6 +5,8 @@ import { authRoutes } from './routes/auth.js';
 import { peopleRoutes } from './routes/people.js';
 import { peopleProgressRoutes } from './routes/people-progress.js';
 import { jiraReportsRoutes } from './routes/jira-reports.js';
+import { calendarRoutes } from './routes/calendar.js';
+import { ensureDatabaseSchema } from './lib/prisma.js';
 
 const app = Fastify({
   logger: true
@@ -35,6 +37,12 @@ await app.register(peopleProgressRoutes, {
 await app.register(jiraReportsRoutes, {
   prefix: '/reports/jira'
 });
+
+await app.register(calendarRoutes, {
+  prefix: '/calendar'
+});
+
+await ensureDatabaseSchema();
 
 const port = Number(process.env.PORT ?? 3399);
 

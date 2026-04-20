@@ -1,3 +1,5 @@
+import dayjs from 'dayjs';
+
 export type PersonRole =
   | 'DEV'
   | 'QA'
@@ -9,6 +11,13 @@ export type PersonRole =
   | 'MANAGER';
 
 export type Seniority = 'INTERN' | 'JUNIOR' | 'MID' | 'SENIOR' | 'STAFF';
+
+export type PersonNextVacation = {
+  id: string;
+  startDate: string;
+  endDate: string;
+  description: string | null;
+};
 
 export const roleOptions: Array<{ label: string; value: PersonRole }> = [
   { label: 'Dev', value: 'DEV' },
@@ -52,4 +61,12 @@ const rolesWithoutSeniority = new Set<PersonRole>(['PO', 'BA', 'TECH_LEAD', 'QA_
 
 export function roleSupportsSeniority(role: PersonRole) {
   return !rolesWithoutSeniority.has(role);
+}
+
+export function formatVacationPeriod(nextVacation: PersonNextVacation | null | undefined) {
+  if (!nextVacation) {
+    return 'não cadastradas';
+  }
+
+  return `${dayjs(nextVacation.startDate).format('DD/MM/YYYY')} até ${dayjs(nextVacation.endDate).format('DD/MM/YYYY')}`;
 }

@@ -10,7 +10,8 @@
     "build": "tsc -p tsconfig.json && DATABASE_URL='file:./prisma/dev.db' prisma generate",
     "prisma:generate": "DATABASE_URL='file:./prisma/dev.db' prisma generate",
     "prisma:migrate": "if [ ! -f prisma/dev.db ]; then DATABASE_URL='file:./prisma/dev.db' prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > prisma/init.sql && DATABASE_URL='file:./prisma/dev.db' prisma db execute --file prisma/init.sql --schema prisma/schema.prisma; else echo 'SQLite already exists at prisma/dev.db (skip init)'; fi",
-    "prisma:seed": "DATABASE_URL='file:./prisma/dev.db' tsx prisma/seed.ts"
+    "prisma:seed": "DATABASE_URL='file:./prisma/dev.db' tsx prisma/seed.ts",
+    "prisma:studio": "DATABASE_URL=\"file:$(pwd)/prisma/dev.db\" prisma studio --schema prisma/schema.prisma --port 5555"
   },
   "dependencies": {
     "@prisma/client": "^6.7.0",
