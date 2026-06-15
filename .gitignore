@@ -8,3 +8,13 @@ dist
 **/.env.local
 packages/database/prisma/dev.db
 packages/database/prisma/dev.db-journal
+
+# Exports do Jira (dados, não versionar)
+jira-export/
+regras-negocio/
+projeto-claude/
+
+# PDFs gerados (saída dos scripts de conversão)
+pdfs/
+pdfs-*/
+*.pdf

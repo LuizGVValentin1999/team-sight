@@ -1,6 +1,14 @@
 'use client';
 
-import { BarChartOutlined, CalendarOutlined, LineChartOutlined, MoonOutlined, SunOutlined } from '@ant-design/icons';
+import {
+  BarChartOutlined,
+  CalendarOutlined,
+  LineChartOutlined,
+  MoonOutlined,
+  ProjectOutlined,
+  ScheduleOutlined,
+  SunOutlined
+} from '@ant-design/icons';
 import { Button, Flex, Layout, Menu, Switch, Typography, theme } from 'antd';
 import type { MenuProps } from 'antd';
 import { useRouter } from 'next/navigation';
@@ -19,9 +27,19 @@ type AppShellProps = {
 
 const menuItems: MenuProps['items'] = [
   {
+    key: '/planning',
+    icon: <ScheduleOutlined />,
+    label: 'Planejamento'
+  },
+  {
     key: '/reports/jira',
     icon: <BarChartOutlined />,
     label: 'Relatório Jira'
+  },
+  {
+    key: '/reports/jira/timeline',
+    icon: <ProjectOutlined />,
+    label: 'Timeline Jira'
   },
   {
     key: '/people/progress',
